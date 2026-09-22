@@ -21,6 +21,8 @@ def main() -> int:
     subparsers.add_parser("test-all", help="Execute the 21-point automated acceptance suite")
     subparsers.add_parser("interactive", help="Start interactive computer control CLI")
     subparsers.add_parser("list-tools", help="List all registered computer control tools and descriptions")
+    subparsers.add_parser("model-status", help="Check local LLM connection, status, and privacy configuration")
+    subparsers.add_parser("chat", help="Start Zoe AI voice/text interactive assistant chat")
 
     args = parser.parse_args()
 
@@ -33,6 +35,12 @@ def main() -> int:
         return cmd_interactive()
     elif args.command == "list-tools":
         return cmd_list_tools()
+    elif args.command == "model-status":
+        from zoe.cli import cmd_model_status
+        return cmd_model_status()
+    elif args.command == "chat":
+        from zoe.cli import cmd_chat
+        return cmd_chat()
     else:
         print_banner()
         parser.print_help()

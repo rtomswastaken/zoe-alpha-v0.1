@@ -56,6 +56,84 @@ def cmd_list_tools() -> int:
     return 0
 
 
+def cmd_model_status() -> int:
+    """Check and display local AI model health and privacy status."""
+    from zoe.models.factory import get_model
+    model = get_model()
+    info = model.model_info()
+
+    print("\nZOE LOCAL AI")
+    print("─" * 32)
+    print(f"Provider:    {info.get('provider')}")
+    print(f"Model:       {info.get('model')}")
+    print(f"Endpoint:    {info.get('endpoint')}")
+    print(f"Status:      {info.get('status')}")
+    print(f"Inference:   {info.get('inference')}")
+    print(f"Network AI:  {info.get('network_ai')}")
+    print("─" * 32)
+
+    if info.get("status") == "AVAILABLE":
+        print("✓ Local model is online and ready for private inference.\n")
+        return 0
+    else:
+        print("✗ Local model is unavailable. Ensure Ollama is running and model is installed.\n")
+        return 1
+
+
+def cmd_chat() -> int:
+    """Start Zoe natural language chat REPL with visible computer control."""
+    from zoe.agent.agent import ZoeAgent
+    agent = ZoeAgent()
+
+    print_banner()
+    print("Zoe Natural-Language Computer Control REPL")
+    print("Inference: 100% Local (Ollama)")
+    print("Safety: Emergency stop active. Press ESC at any time to abort.\n")
+
+    emergency_controller.start_listener()
+
+    if not agent.is_ready():
+        print(f"[Warning] Local model '{agent.config.model.name}' is currently unavailable.")
+        print(f"Please check that Ollama is running at {agent.config.model.endpoint}.\n")
+
+    while True:
+        try:
+            user_input = input("Zoe> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting Zoe chat.")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ("exit", "quit", "q"):
+            print("Goodbye!")
+            break
+        elif user_input.lower() == "reset":
+            emergency_controller.reset()
+            print("[Info] Emergency stop reset. Control resumed.")
+            continue
+        elif user_input.lower() == "status":
+            cmd_model_status()
+            continue
+
+        print(f"\n[Zoe Thinking...]")
+        t0 = time.time()
+        state = agent.run_task(user_input)
+        elapsed = time.time() - t0
+
+        if state.recent_actions:
+            print(f"[Actions Executed ({len(state.recent_actions)}) in {elapsed:.2f}s]")
+            for act in state.recent_actions:
+                status_str = "✓" if act["result"].get("success") else "✗"
+                print(f"  {status_str} {act['action']}({act['arguments']})")
+
+        print(f"\nZoe: {state.final_response or 'Done.'}\n")
+
+    emergency_controller.stop_listener()
+    return 0
+
+
 def run_acceptance_suite() -> Dict[str, Any]:
     """
     Executes the 21-point Phase 1 acceptance test suite.

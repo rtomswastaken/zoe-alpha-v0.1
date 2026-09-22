@@ -7,6 +7,23 @@ import yaml
 
 
 @dataclass
+class ModelConfig:
+    provider: str = "ollama"
+    name: str = "qwen3:14b"
+    endpoint: str = "http://127.0.0.1:11434"
+    temperature: float = 0.1
+    max_tokens: int = 2048
+    timeout: float = 60.0
+
+
+@dataclass
+class AgentConfig:
+    max_tool_calls: int = 30
+    timeout_seconds: float = 300.0
+    system_prompt_extra: str = ""
+
+
+@dataclass
 class CursorConfig:
     default_duration: float = 0.35
     default_steps: int = 40
@@ -53,6 +70,8 @@ class ScreenshotConfig:
 @dataclass
 class Config:
     version: str = "1.0"
+    model: ModelConfig = field(default_factory=ModelConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
     mouse: MouseConfig = field(default_factory=MouseConfig)
     keyboard: KeyboardConfig = field(default_factory=KeyboardConfig)
@@ -76,6 +95,8 @@ class Config:
 
             return cls(
                 version=data.get("version", "1.0"),
+                model=ModelConfig(**data.get("model", {})),
+                agent=AgentConfig(**data.get("agent", {})),
                 cursor=CursorConfig(**data.get("cursor", {})),
                 mouse=MouseConfig(**data.get("mouse", {})),
                 keyboard=KeyboardConfig(**data.get("keyboard", {})),

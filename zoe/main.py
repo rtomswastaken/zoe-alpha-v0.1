@@ -17,6 +17,7 @@ def main() -> int:
     )
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
 
+    subparsers.add_parser("start", help="Launch the unified Zoe local assistant runtime (Voice + Vision + Notch + Memory)")
     subparsers.add_parser("check-permissions", help="Verify macOS Accessibility and Screen Recording permissions")
     subparsers.add_parser("test-all", help="Execute the 21-point automated acceptance suite")
     subparsers.add_parser("interactive", help="Start interactive computer control CLI")
@@ -40,7 +41,11 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.command == "check-permissions":
+    if args.command == "start":
+        from zoe.runtime import get_runtime
+        get_runtime().start()
+        return 0
+    elif args.command == "check-permissions":
         return cmd_check_permissions()
     elif args.command == "test-all":
         results = run_acceptance_suite()

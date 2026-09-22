@@ -36,6 +36,23 @@ htmlcov/
 cache/
 logs/
 temp/
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Audio recordings & model files
+recordings/
+models/
+*.wav
+*.mp3
+*.m4a
+
+# Environment & secrets
+.env
+*.env
+*.pem
+*.key
 
 # macOS
 .DS_Store

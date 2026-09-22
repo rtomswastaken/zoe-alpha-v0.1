@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoe.agent.history import ActionHistory, ActionRecord
+from zoe.agent.plan import TaskPlan
 
 
 @dataclass
@@ -13,25 +15,36 @@ class AgentState:
     """
     task: str
     active_app: str = ""
-    recent_actions: List[Dict[str, Any]] = field(default_factory=list)
-    tool_results: List[Dict[str, Any]] = field(default_factory=list)
+    history: ActionHistory = field(default_factory=ActionHistory)
+    plan: Optional[TaskPlan] = None
     cancelled: bool = False
     is_complete: bool = False
     iteration_count: int = 0
     final_response: Optional[str] = None
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
-    def record_action(self, action_name: str, arguments: Dict[str, Any], result: Dict[str, Any]) -> None:
+    @property
+    def recent_actions(self) -> List[Dict[str, Any]]:
+        return [r.to_dict() for r in self.history.records]
+
+    @property
+    def tool_results(self) -> List[Dict[str, Any]]:
+        return [r.result for r in self.history.records]
+
+    def record_action(
+        self,
+        action_name: str,
+        arguments: Dict[str, Any],
+        result: Dict[str, Any],
+        verified: bool = False,
+    ) -> ActionRecord:
         """Record an executed tool action and its structured outcome."""
-        entry = {
-            "action": action_name,
-            "arguments": arguments,
-            "result": result,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "iteration": self.iteration_count,
-        }
-        self.recent_actions.append(entry)
-        self.tool_results.append(result)
+        return self.history.record(
+            tool_name=action_name,
+            arguments=arguments,
+            result=result,
+            verified=verified,
+        )
 
     def mark_complete(self, response_text: str) -> None:
         self.is_complete = True

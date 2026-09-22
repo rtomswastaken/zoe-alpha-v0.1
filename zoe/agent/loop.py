@@ -30,12 +30,21 @@ class AgentLoop:
         state = AgentState(task=task)
         zoe_logger.log_action("AGENT_START_TASK", task=task)
 
-        # 1. Preflight Emergency Stop check
+        # 1. Safety Guard: Check if entire task is destructive
+        from zoe.agent.safety import SafetyGuard
+        is_destructive, reason = SafetyGuard.is_destructive_task(task)
+        if is_destructive:
+            msg = f"Operation cancelled: {reason}. Destructive actions require explicit confirmation."
+            state.mark_cancelled(msg)
+            zoe_logger.log_action("AGENT_SAFETY_BLOCKED", task=task, reason=reason)
+            return state
+
+        # 2. Preflight Emergency Stop check
         if emergency_controller.is_stopped():
             state.mark_cancelled("Emergency stop was already active")
             return state
 
-        # 2. Build initial conversation messages
+        # 3. Build initial conversation messages
         system_content = get_system_prompt(self.config.agent.system_prompt_extra)
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_content},
@@ -66,10 +75,16 @@ class AgentLoop:
                 zoe_logger.log_action("AGENT_MAX_ITERATIONS", task=task)
                 break
 
+            # Repetition loop detection
+            if state.history.check_repetition_loop(threshold=3):
+                state.mark_cancelled("Execution halted: repeated failed actions detected (loop prevention).")
+                zoe_logger.log_action("AGENT_REPETITION_LOOP_HALTED", task=task)
+                break
+
             state.iteration_count += 1
             zoe_logger.log_action("AGENT_THINK", iteration=state.iteration_count)
 
-            # 3. Model inference
+            # 4. Model inference
             try:
                 model_resp: ModelResponse = self.model.chat(
                     messages=messages,
@@ -83,9 +98,8 @@ class AgentLoop:
                 zoe_logger.log_action("AGENT_MODEL_ERROR", error=str(e))
                 break
 
-            # 4. Handle model response
+            # 5. Handle model response
             if model_resp.has_tool_calls():
-                # Append assistant message with tool calls to conversation history
                 assistant_msg: Dict[str, Any] = {
                     "role": "assistant",
                     "content": model_resp.text,
@@ -105,32 +119,58 @@ class AgentLoop:
 
                 # Execute each requested tool call
                 for tc in model_resp.tool_calls:
-                    # Check emergency stop before each individual tool execution
                     if emergency_controller.is_stopped():
                         state.mark_cancelled("Emergency stop (ESC) triggered before tool execution")
                         break
+
+                    # Validate tool execution safety
+                    is_safe, warn_reason = SafetyGuard.validate_tool_execution(tc.name, tc.arguments)
+                    if not is_safe:
+                        tool_result = {"success": False, "error": f"Safety restriction: {warn_reason}"}
+                        state.record_action(tc.name, tc.arguments, tool_result)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "name": tc.name,
+                            "content": json.dumps(tool_result),
+                        })
+                        continue
 
                     zoe_logger.log_action("AGENT_EXECUTE_TOOL", tool=tc.name, arguments=tc.arguments)
 
                     # Execute strictly through ToolRegistry
                     tool_result = tool_registry.execute(tc.name, **tc.arguments)
 
-                    # Record in state
-                    state.record_action(tc.name, tc.arguments, tool_result)
+                    # Determine verification status
+                    is_verified = False
+                    if tc.name in ("inspect_screen", "get_windows", "get_active_app"):
+                        is_verified = tool_result.get("success", False)
+                    elif tc.name == "find_on_screen":
+                        is_verified = tool_result.get("found", False)
 
-                    # Append tool result to conversation history
+                    state.record_action(tc.name, tc.arguments, tool_result, verified=is_verified)
+
+                    # Context compaction: avoid giant payloads in model conversation history
+                    content_str = json.dumps(tool_result)
+                    if len(content_str) > 1500:
+                        compact_result = dict(tool_result)
+                        if "tree" in compact_result:
+                            compact_result["tree"] = f"<Accessibility tree summary: app={compact_result.get('app')}>"
+                        if "windows" in compact_result and len(compact_result["windows"]) > 5:
+                            compact_result["windows"] = compact_result["windows"][:5]
+                        content_str = json.dumps(compact_result)
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": tc.name,
-                        "content": json.dumps(tool_result),
+                        "content": content_str,
                     })
 
                 if state.cancelled:
                     break
 
             else:
-                # Model finished planning and returned final natural-language response
                 final_text = model_resp.text or "Done."
                 state.mark_complete(final_text)
                 zoe_logger.log_action("AGENT_TASK_COMPLETE", response=final_text[:60])

@@ -22,6 +22,8 @@ def main() -> int:
     subparsers.add_parser("interactive", help="Start interactive computer control CLI")
     subparsers.add_parser("list-tools", help="List all registered computer control tools and descriptions")
     subparsers.add_parser("model-status", help="Check local LLM connection, status, and privacy configuration")
+    subparsers.add_parser("vision-status", help="Check local vision model connection, status, and privacy configuration")
+    subparsers.add_parser("vision-test", help="Test local screen capture and visual UI inspection")
     subparsers.add_parser("chat", help="Start Zoe AI voice/text interactive assistant chat")
 
     args = parser.parse_args()
@@ -38,6 +40,12 @@ def main() -> int:
     elif args.command == "model-status":
         from zoe.cli import cmd_model_status
         return cmd_model_status()
+    elif args.command == "vision-status":
+        from zoe.cli import cmd_vision_status
+        return cmd_vision_status()
+    elif args.command == "vision-test":
+        from zoe.cli import cmd_vision_test
+        return cmd_vision_test()
     elif args.command == "chat":
         from zoe.cli import cmd_chat
         return cmd_chat()

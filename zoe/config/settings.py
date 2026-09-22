@@ -17,6 +17,17 @@ class ModelConfig:
 
 
 @dataclass
+class VisionConfig:
+    provider: str = "ollama"
+    model: str = "minicpm-v"
+    endpoint: str = "http://127.0.0.1:11434"
+    max_tokens: int = 1024
+    enabled: bool = True
+    confidence_threshold: float = 0.75
+    debug_overlay: bool = False
+
+
+@dataclass
 class AgentConfig:
     max_tool_calls: int = 30
     timeout_seconds: float = 300.0
@@ -71,6 +82,7 @@ class ScreenshotConfig:
 class Config:
     version: str = "1.0"
     model: ModelConfig = field(default_factory=ModelConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
     mouse: MouseConfig = field(default_factory=MouseConfig)
@@ -96,6 +108,7 @@ class Config:
             return cls(
                 version=data.get("version", "1.0"),
                 model=ModelConfig(**data.get("model", {})),
+                vision=VisionConfig(**data.get("vision", {})),
                 agent=AgentConfig(**data.get("agent", {})),
                 cursor=CursorConfig(**data.get("cursor", {})),
                 mouse=MouseConfig(**data.get("mouse", {})),

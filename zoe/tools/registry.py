@@ -23,6 +23,10 @@ from zoe.tools.applications import (
     GetWindowsTool,
     GetAccessibilityTreeTool,
 )
+from zoe.tools.vision import (
+    FindOnScreenTool,
+    InspectScreenTool,
+)
 
 
 class ToolRegistry:
@@ -87,6 +91,10 @@ class ToolRegistry:
         self.register(GetRunningAppsTool())
         self.register(GetWindowsTool())
         self.register(GetAccessibilityTreeTool())
+
+        # Computer Vision & Screen Understanding
+        self.register(FindOnScreenTool())
+        self.register(InspectScreenTool())
 
 
 tool_registry = ToolRegistry()

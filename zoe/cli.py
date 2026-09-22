@@ -80,6 +80,59 @@ def cmd_model_status() -> int:
         return 1
 
 
+def cmd_vision_status() -> int:
+    """Check and display local vision model health and privacy status."""
+    from zoe.models.vision_factory import get_vision_model
+    vmodel = get_vision_model()
+    info = vmodel.model_info()
+
+    print("\nZOE LOCAL VISION")
+    print("─" * 32)
+    print(f"Provider:        {info.get('provider')}")
+    print(f"Model:           {info.get('model')}")
+    print(f"Endpoint:        {info.get('endpoint')}")
+    print(f"Inference:       {info.get('inference')}")
+    print(f"Screenshots:     {info.get('screenshots')}")
+    print(f"Network Vision:  {info.get('network_vision')}")
+    print(f"Status:          {info.get('status')}")
+    print("─" * 32)
+
+    if info.get("status") == "AVAILABLE":
+        print("✓ Local vision model is online and ready.\n")
+        return 0
+    else:
+        print("✗ Local vision model is unavailable or still downloading.\n")
+        return 1
+
+
+def cmd_vision_test() -> int:
+    """Capture a single in-memory screenshot and inspect visible UI with local vision."""
+    from zoe.models.vision_factory import get_vision_model
+    from zoe.macos.screenshots import capture_for_vision
+
+    vmodel = get_vision_model()
+    if not vmodel.is_available():
+        print(f"[Error] Local vision model '{vmodel.model_name}' is not currently available.")
+        return 1
+
+    print("\n[Zoe Vision Test]")
+    print("1. Capturing screen in memory...")
+    shot = capture_for_vision(max_dim=1024)
+    if not shot.get("success"):
+        print(f"Failed to capture screen: {shot.get('error')}")
+        return 1
+
+    print(f"   Captured: {shot['vision_width']}x{shot['vision_height']} (in-memory, 0 bytes written to disk)")
+    print("2. Sending to local vision model for analysis...")
+    t0 = time.time()
+    analysis = vmodel.analyze(shot["base64_image"], "Describe what application windows and UI controls are visible.")
+    elapsed = time.time() - t0
+    print(f"   Analysis completed in {elapsed:.2f}s:\n")
+    print(f"Description:\n{analysis.description}\n")
+    print("✓ Local vision test complete. No images were saved to disk or transmitted off-device.\n")
+    return 0
+
+
 def cmd_chat() -> int:
     """Start Zoe natural language chat REPL with visible computer control."""
     from zoe.agent.agent import ZoeAgent

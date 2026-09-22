@@ -9,6 +9,15 @@ model:
   max_tokens: 2048
   timeout: 60.0
 
+vision:
+  provider: "ollama"
+  model: "minicpm-v"          # local vision model
+  endpoint: "http://127.0.0.1:11434"
+  max_tokens: 1024
+  enabled: true
+  confidence_threshold: 0.75
+  debug_overlay: false
+
 agent:
   max_tool_calls: 30
   timeout_seconds: 300.0

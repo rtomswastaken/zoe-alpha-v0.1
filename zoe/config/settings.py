@@ -79,6 +79,59 @@ class ScreenshotConfig:
 
 
 @dataclass
+class WakeWordConfig:
+    enabled: bool = True
+    phrase: str = "zoe"
+    threshold: float = 0.6
+
+
+@dataclass
+class STTConfig:
+    provider: str = "faster_whisper"
+    model: str = "base.en"
+    compute_type: str = "int8"
+    language: str = "en"
+
+
+@dataclass
+class TTSConfig:
+    provider: str = "nsspeech"
+    voice: str = "Samantha"
+    rate: int = 190
+    volume: float = 1.0
+
+
+@dataclass
+class InterruptionConfig:
+    voice_stop: bool = True
+    keyboard_stop: bool = True
+
+
+@dataclass
+class VoiceConfig:
+    enabled: bool = True
+    sample_rate: int = 16000
+    wake_word: WakeWordConfig = field(default_factory=WakeWordConfig)
+    stt: STTConfig = field(default_factory=STTConfig)
+    tts: TTSConfig = field(default_factory=TTSConfig)
+    interruption: InterruptionConfig = field(default_factory=InterruptionConfig)
+
+
+@dataclass
+class NotchUIConfig:
+    enabled: bool = True
+    animation: bool = True
+    voice_reactive: bool = True
+    show_on_idle: bool = False
+    glow_spread: float = 24.0
+
+
+@dataclass
+class UIConfig:
+    notch: NotchUIConfig = field(default_factory=NotchUIConfig)
+
+
+@dataclass
 class Config:
     version: str = "1.0"
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -90,6 +143,8 @@ class Config:
     emergency: EmergencyConfig = field(default_factory=EmergencyConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     screenshots: ScreenshotConfig = field(default_factory=ScreenshotConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
+    ui: UIConfig = field(default_factory=UIConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "Config":
@@ -105,6 +160,27 @@ class Config:
             with open(config_path, "r", encoding="utf-8") as f:
                 data: Dict[str, Any] = yaml.safe_load(f) or {}
 
+            voice_raw = data.get("voice", {})
+            wake_word_raw = voice_raw.get("wake_word", {})
+            stt_raw = voice_raw.get("stt", {})
+            tts_raw = voice_raw.get("tts", {})
+            interruption_raw = voice_raw.get("interruption", {})
+
+            voice_cfg = VoiceConfig(
+                enabled=voice_raw.get("enabled", True),
+                sample_rate=voice_raw.get("sample_rate", 16000),
+                wake_word=WakeWordConfig(**wake_word_raw),
+                stt=STTConfig(**stt_raw),
+                tts=TTSConfig(**tts_raw),
+                interruption=InterruptionConfig(**interruption_raw),
+            )
+
+            ui_raw = data.get("ui", {})
+            notch_raw = ui_raw.get("notch", {})
+            ui_cfg = UIConfig(
+                notch=NotchUIConfig(**notch_raw)
+            )
+
             return cls(
                 version=data.get("version", "1.0"),
                 model=ModelConfig(**data.get("model", {})),
@@ -116,6 +192,8 @@ class Config:
                 emergency=EmergencyConfig(**data.get("emergency", {})),
                 logging=LoggingConfig(**data.get("logging", {})),
                 screenshots=ScreenshotConfig(**data.get("screenshots", {})),
+                voice=voice_cfg,
+                ui=ui_cfg,
             )
         except Exception:
             return cls()

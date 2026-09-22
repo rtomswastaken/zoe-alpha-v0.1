@@ -46,12 +46,42 @@ def check_screen_recording_permission(prompt: bool = False) -> bool:
         return False
 
 
+try:
+    import AVFoundation
+except ImportError:
+    AVFoundation = None
+
+
+def check_microphone_permission(prompt: bool = False) -> bool:
+    """
+    Check if the current process has Microphone permission on macOS.
+    Returns True if AVAuthorizationStatusAuthorized (3).
+    """
+    if AVFoundation is None:
+        return False
+    try:
+        status = AVFoundation.AVCaptureDevice.authorizationStatusForMediaType_(
+            AVFoundation.AVMediaTypeAudio
+        )
+        if status == 3:  # AVAuthorizationStatusAuthorized
+            return True
+        elif status == 0 and prompt:  # AVAuthorizationStatusNotDetermined
+            # Request permission
+            AVFoundation.AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                AVFoundation.AVMediaTypeAudio, None
+            )
+        return False
+    except Exception:
+        return False
+
+
 def get_permission_status() -> Dict[str, Any]:
     """Retrieve structured permission status and remediation advice."""
     accessibility = check_accessibility_permission(prompt=False)
     screen_recording = check_screen_recording_permission(prompt=False)
+    microphone = check_microphone_permission(prompt=False)
 
-    all_granted = accessibility and screen_recording
+    all_granted = accessibility and screen_recording and microphone
 
     instructions = []
     if not accessibility:
@@ -62,11 +92,16 @@ def get_permission_status() -> Dict[str, Any]:
         instructions.append(
             "Grant Screen Recording permission: System Settings > Privacy & Security > Screen & System Audio Recording > Enable Terminal / Python / Antigravity"
         )
+    if not microphone:
+        instructions.append(
+            "Grant Microphone permission: System Settings > Privacy & Security > Microphone > Enable Terminal / Python / Antigravity"
+        )
 
     return {
         "success": all_granted,
         "accessibility_granted": accessibility,
         "screen_recording_granted": screen_recording,
+        "microphone_granted": microphone,
         "all_granted": all_granted,
         "instructions": instructions,
     }

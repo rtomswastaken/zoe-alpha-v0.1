@@ -58,6 +58,10 @@ class EmergencyStopController:
             except Exception as e:
                 zoe_logger.log_action("EMERGENCY_CLEANUP_ERROR", error=str(e))
 
+    def trigger_stop(self, reason: str = "Emergency stop triggered (ESC pressed)") -> None:
+        """Alias for trigger()."""
+        self.trigger(reason)
+
     def reset(self) -> None:
         """Reset emergency stop to allow resuming actions."""
         with self._lock:

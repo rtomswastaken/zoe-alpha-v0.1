@@ -76,6 +76,7 @@ class OllamaModel(LocalModel):
         opts: Dict[str, Any] = {
             "temperature": temperature if temperature is not None else self.default_temperature,
             "num_predict": max_tokens if max_tokens is not None else self.default_max_tokens,
+            "num_ctx": 4096,
         }
 
         payload: Dict[str, Any] = {
@@ -87,6 +88,8 @@ class OllamaModel(LocalModel):
 
         if tools:
             payload["tools"] = tools
+            payload["think"] = False
+            opts["think"] = False
 
         body_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(

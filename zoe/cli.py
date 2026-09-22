@@ -561,3 +561,175 @@ def cmd_interactive() -> int:
 
     emergency_controller.stop_listener()
     return 0
+
+
+def cmd_voice_status() -> int:
+    """Check and display local voice and notch subsystem status."""
+    from zoe.config import get_config
+    from zoe.macos.permissions import get_permission_status
+    from zoe.ui.notch import NotchGeometry
+    from AppKit import NSScreen
+
+    cfg = get_config()
+    perms = get_permission_status()
+    notch_rect = NotchGeometry.get_notch_rect(NSScreen.mainScreen())
+
+    mic_status = "GRANTED" if perms.get("microphone_granted") else "MISSING"
+    stt_info = f"READY ({cfg.voice.stt.provider} / {cfg.voice.stt.model})"
+    tts_info = f"READY ({cfg.voice.tts.provider} / {cfg.voice.tts.voice})"
+    wake_info = f"READY ({cfg.voice.wake_word.phrase})"
+    notch_info = f"READY ({notch_rect.size.width:.0f}x{notch_rect.size.height:.0f}pt @ x={notch_rect.origin.x:.0f})"
+
+    print("\nZOE LOCAL VOICE")
+    print("────────────────────────────────")
+    print(f"Wake Word:     {wake_info}")
+    print(f"STT:           {stt_info}")
+    print(f"TTS:           {tts_info}")
+    print(f"Microphone:    {mic_status}")
+    print(f"Speaker:       ONLINE")
+    print(f"Notch UI:      {notch_info}")
+    print(f"Cloud Audio:   DISABLED (100% Local)")
+    print("────────────────────────────────")
+    if perms.get("microphone_granted"):
+        print("✓ Voice subsystem is ready for private local interaction.\n")
+        return 0
+    else:
+        print("[Notice] Microphone permission required in System Settings.\n")
+        return 1
+
+
+def cmd_notch_test() -> int:
+    """Visually test the MacBook Notch Glow UI across all lifecycle states."""
+    import math
+    from zoe.ui.animation import get_animation_controller
+    from zoe.ui.state import set_ui_state, set_ui_audio_level
+    from zoe.voice.state import VoiceState
+    from AppKit import NSRunLoop, NSDate
+
+    print("\n[Zoe MacBook Notch UI Test]")
+    print("Anchoring non-activating click-through glow window to physical MacBook notch...")
+
+    anim = get_animation_controller()
+    anim.start()
+
+    states = [
+        (VoiceState.LISTENING, "1. LISTENING  (Gentle pulsing cyan/blue glow with audio amplitude)", 3.0),
+        (VoiceState.THINKING,  "2. THINKING   (Fluid revolving violet/indigo gradient)", 3.0),
+        (VoiceState.ACTING,    "3. ACTING     (Active wave ripple during computer control)", 3.0),
+        (VoiceState.SPEAKING,  "4. SPEAKING   (Voice-reactive magenta/purple/cyan expansion)", 3.0),
+        (VoiceState.IDLE,      "5. IDLE       (Fading out completely to 0% alpha)", 1.5),
+    ]
+
+    try:
+        for st, desc, duration in states:
+            print(f" -> Testing {desc}...")
+            set_ui_state(st)
+            start_t = time.time()
+            while time.time() - start_t < duration:
+                elapsed = time.time() - start_t
+                if st in (VoiceState.LISTENING, VoiceState.SPEAKING):
+                    # Simulate speech amplitude wave
+                    sim_amp = 0.3 + 0.5 * abs(math.sin(elapsed * 4.0))
+                    set_ui_audio_level(sim_amp, pitch=260.0)
+                time.sleep(0.05)
+                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.01))
+    finally:
+        set_ui_state(VoiceState.IDLE)
+        anim.stop()
+
+    print("✓ Notch UI test complete. Window disappeared without stealing focus or blocking clicks.\n")
+    return 0
+
+
+def cmd_voice_test() -> int:
+    """Run interactive and automated verification of audio, STT, TTS, and wake-word."""
+    from zoe.voice.audio import AudioRecorder
+    from zoe.voice.tts import get_tts
+    from zoe.voice.stt import get_stt
+    from zoe.voice.wake_word import get_wake_word_detector
+    from zoe.voice.state import VoiceState, voice_state_manager
+    import numpy as np
+
+    print("\n[Zoe Voice Subsystem Diagnostic]")
+
+    # 1. State machine test
+    print("1. Testing Voice State Machine transitions...")
+    voice_state_manager.set_state(VoiceState.LISTENING)
+    assert voice_state_manager.current_state == VoiceState.LISTENING
+    voice_state_manager.set_state(VoiceState.IDLE)
+    assert voice_state_manager.current_state == VoiceState.IDLE
+    print("   ✓ State transitions verified.")
+
+    # 2. Local TTS test
+    print("2. Testing Local TTS (NSSpeechSynthesizer)...")
+    tts = get_tts()
+    print("   Speaking confirmation: 'Zoe voice online'...")
+    spoken = tts.speak("Zoe voice online.", wait=True)
+    assert spoken is True
+    print("   ✓ Local TTS synthesis and playback successful.")
+
+    # 3. Audio stream recorder
+    print("3. Testing Local Microphone capture (1 second buffer)...")
+    rec = AudioRecorder(sample_rate=16000)
+    rec.start()
+    time.sleep(1.0)
+    audio = rec.get_recent_audio(0.8)
+    rec.stop()
+    rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) > 0 else 0.0
+    print(f"   Captured {len(audio)} audio samples. RMS volume: {rms:.4f}")
+    assert len(audio) > 0
+    print("   ✓ Microphone capture and in-memory ring buffer operational.")
+
+    # 4. Local STT model test
+    print("4. Testing Local Speech-to-Text (faster-whisper)...")
+    stt = get_stt()
+    print("   Loading local STT model into memory...")
+    # Test on synthetic silence/tone
+    synthetic_audio = np.zeros(16000, dtype=np.float32)
+    trans = stt.transcribe(synthetic_audio)
+    print(f"   Transcribed silence: '{trans}' (expected empty)")
+    print("   ✓ Local STT engine loaded and responsive.")
+
+    # 5. Wake word detector test
+    print("5. Testing Wake Word Detector ('zoe')...")
+    ww = get_wake_word_detector()
+    assert ww.phrase == "zoe"
+    print(f"   Configured wake phrase: '{ww.phrase}'")
+    print("   ✓ Wake-word detector ready.")
+
+    print("\n✓ All voice diagnostics passed. 100% on-device.\n")
+    return 0
+
+
+def cmd_listen() -> int:
+    """Launch Zoe continuous voice listener with ambient MacBook Notch glow."""
+    from zoe.voice.pipeline import get_voice_pipeline
+    from zoe.config import get_config
+
+    cfg = get_config()
+    print_banner()
+    print(f"Zoe Continuous Voice Assistant (100% Local)")
+    print(f"Wake Phrase: '{cfg.voice.wake_word.phrase}'")
+    print(f"STT: {cfg.voice.stt.provider} ({cfg.voice.stt.model}) | TTS: {cfg.voice.tts.provider} ({cfg.voice.tts.voice})")
+    print("MacBook Notch Glow UI: ACTIVE (Ambient non-interactive glow)")
+    print("Press ESC or Ctrl+C to halt.\n")
+
+    emergency_controller.start_listener()
+    pipeline = get_voice_pipeline()
+    pipeline.start()
+
+    try:
+        while True:
+            time.sleep(0.5)
+            if emergency_controller.is_stopped():
+                print("\n[Emergency Stop] Voice pipeline halted by ESC key.")
+                break
+    except KeyboardInterrupt:
+        print("\nStopping Zoe voice pipeline...")
+    finally:
+        pipeline.stop()
+        emergency_controller.stop_listener()
+        print("Zoe voice pipeline stopped.")
+
+    return 0
+

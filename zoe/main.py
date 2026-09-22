@@ -29,6 +29,14 @@ def main() -> int:
     subparsers.add_parser("notch-test", help="Visually test MacBook Notch glow animation states")
     subparsers.add_parser("listen", help="Start continuous local voice assistant with ambient Notch UI")
     subparsers.add_parser("chat", help="Start Zoe AI voice/text interactive assistant chat")
+    subparsers.add_parser("memory-status", help="Check local persistent memory status")
+    subparsers.add_parser("memory-list", help="List all stored user and task memories")
+    mem_search_p = subparsers.add_parser("memory-search", help="Search stored memories by keyword")
+    mem_search_p.add_argument("query", help="Keyword to search")
+    mem_del_p = subparsers.add_parser("memory-delete", help="Delete a stored memory by key")
+    mem_del_p.add_argument("key", help="Key to remove")
+    mem_clr_p = subparsers.add_parser("memory-clear", help="Clear all stored memories")
+    mem_clr_p.add_argument("--force", action="store_true", help="Skip confirmation prompt")
 
     args = parser.parse_args()
 
@@ -65,6 +73,21 @@ def main() -> int:
     elif args.command == "chat":
         from zoe.cli import cmd_chat
         return cmd_chat()
+    elif args.command == "memory-status":
+        from zoe.cli import cmd_memory_status
+        return cmd_memory_status()
+    elif args.command == "memory-list":
+        from zoe.cli import cmd_memory_list
+        return cmd_memory_list()
+    elif args.command == "memory-search":
+        from zoe.cli import cmd_memory_search
+        return cmd_memory_search(args.query)
+    elif args.command == "memory-delete":
+        from zoe.cli import cmd_memory_delete
+        return cmd_memory_delete(args.key)
+    elif args.command == "memory-clear":
+        from zoe.cli import cmd_memory_clear
+        return cmd_memory_clear(force=args.force)
     else:
         print_banner()
         parser.print_help()

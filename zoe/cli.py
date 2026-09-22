@@ -733,3 +733,87 @@ def cmd_listen() -> int:
 
     return 0
 
+
+def cmd_memory_status() -> int:
+    """Check and display local SQLite memory status."""
+    from zoe.memory import get_memory_manager
+
+    mgr = get_memory_manager()
+    items = mgr.store.list_all()
+
+    print("\nZOE LOCAL MEMORY")
+    print("────────────────────────────────")
+    print(f"Backend:       SQLite (100% Local)")
+    print(f"Database:      {mgr.db.db_path}")
+    print(f"Total Records: {len(items)}")
+    print(f"Cloud Sync:    DISABLED")
+    print("────────────────────────────────")
+    print("✓ Local persistent memory is active and private.\n")
+    return 0
+
+
+def cmd_memory_list() -> int:
+    """List all stored memories."""
+    from zoe.memory import get_memory_manager
+
+    mgr = get_memory_manager()
+    items = mgr.store.list_all()
+    if not items:
+        print("\nNo memories stored yet. Use 'remember that...' or CLI to add one.\n")
+        return 0
+
+    print(f"\nStored Memories ({len(items)}):")
+    print("────────────────────────────────────────────────────────────")
+    for item in items:
+        print(f"[{item.category.value:10s}] {item.key:20s} = {item.value}")
+    print("────────────────────────────────────────────────────────────\n")
+    return 0
+
+
+def cmd_memory_search(query: str) -> int:
+    """Search stored memories by keyword."""
+    from zoe.memory import get_memory_manager
+
+    mgr = get_memory_manager()
+    results = mgr.store.search(query)
+    if not results:
+        print(f"\nNo memories found matching '{query}'.\n")
+        return 0
+
+    print(f"\nSearch results for '{query}' ({len(results)}):")
+    print("────────────────────────────────────────────────────────────")
+    for item in results:
+        print(f"[{item.category.value:10s}] {item.key:20s} = {item.value}")
+    print("────────────────────────────────────────────────────────────\n")
+    return 0
+
+
+def cmd_memory_delete(key: str) -> int:
+    """Delete a memory by key."""
+    from zoe.memory import get_memory_manager
+
+    mgr = get_memory_manager()
+    deleted = mgr.store.delete(key)
+    if deleted:
+        print(f"Deleted memory '{key}'.")
+        return 0
+    else:
+        print(f"Memory key '{key}' not found.")
+        return 1
+
+
+def cmd_memory_clear(force: bool = False) -> int:
+    """Clear all memories with confirmation."""
+    from zoe.memory import get_memory_manager
+
+    if not force:
+        confirm = input("Are you sure you want to clear all persistent memories? (y/N): ").strip().lower()
+        if confirm != "y":
+            print("Operation cancelled.")
+            return 0
+
+    mgr = get_memory_manager()
+    count = mgr.store.clear()
+    print(f"Cleared {count} memory records.")
+    return 0
+

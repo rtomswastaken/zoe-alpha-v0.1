@@ -39,13 +39,26 @@ class AgentLoop:
             zoe_logger.log_action("AGENT_SAFETY_BLOCKED", task=task, reason=reason)
             return state
 
-        # 2. Preflight Emergency Stop check
+        # 2. Check for explicit memory directive ("remember that...", "forget...")
+        from zoe.memory import get_memory_manager
+        mem_mgr = get_memory_manager()
+        is_directive, resp = mem_mgr.process_directive(task)
+        if is_directive and resp:
+            state.mark_complete(resp)
+            zoe_logger.log_action("AGENT_MEMORY_DIRECTIVE", task=task, response=resp)
+            return state
+
+        # 3. Preflight Emergency Stop check
         if emergency_controller.is_stopped():
             state.mark_cancelled("Emergency stop was already active")
             return state
 
-        # 3. Build initial conversation messages
+        # 4. Build initial conversation messages with optional relevant memory context
         system_content = get_system_prompt(self.config.agent.system_prompt_extra)
+        memory_block = mem_mgr.retriever.format_context_block(task)
+        if memory_block:
+            system_content = f"{system_content}\n\n{memory_block}"
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": task},

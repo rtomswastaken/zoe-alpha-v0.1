@@ -101,8 +101,11 @@ class ZoeRuntime:
         zoe_logger.log_action("RUNTIME_STARTED")
 
         try:
+            from AppKit import NSRunLoop, NSDate
+            run_loop = NSRunLoop.currentRunLoop()
             while self._running:
-                time.sleep(0.5)
+                # Pump Cocoa RunLoop so AppKit flushes notch overlay drawing and animation
+                run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
                 if emergency_controller.is_stopped():
                     print("\n[Emergency Stop] ESC pressed. Resetting Zoe to IDLE.")
                     self.voice_pipeline.tts.stop()

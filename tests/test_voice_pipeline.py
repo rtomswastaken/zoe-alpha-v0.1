@@ -16,7 +16,7 @@ class MockSTT(BaseSTT):
     def __init__(self, transcription: str = "open Calculator"):
         self.transcription = transcription
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
+    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000, **kwargs) -> str:
         return self.transcription
 
     def is_available(self) -> bool:

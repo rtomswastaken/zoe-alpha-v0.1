@@ -93,25 +93,41 @@ class VoicePipeline:
 
     def _handle_wake_cycle(self) -> None:
         """Handle execution cycle triggered by wake word."""
-        # 2. Transition State: LISTENING
-        voice_state_manager.set_state(VoiceState.LISTENING)
-        zoe_logger.log_action("VOICE_LISTENING_PHRASE")
+        # 1. Check if user already spoke their command in the same breath (e.g. "Zoe open Safari")
+        extracted = getattr(self.wake_word, "extracted_command", "").strip()
 
-        # Record subsequent command phrase until silence
-        speech = self.recorder.record_until_silence(
-            silence_timeout=1.2,
-            max_duration=12.0,
-            is_interrupted=lambda: emergency_controller.is_stopped() or not self._running,
-        )
+        if extracted and len(extracted.split()) >= 1 and extracted.lower() not in ("zoe", "hey"):
+            clean_text = extracted
+            zoe_logger.log_action("VOICE_COMMAND_IMMEDIATE", command=clean_text)
+            # Brief visual pulse acknowledging wake word before acting
+            voice_state_manager.set_state(VoiceState.LISTENING)
+            time.sleep(0.3)
+            voice_state_manager.set_state(VoiceState.THINKING)
+            time.sleep(0.15)
+        else:
+            # 2. Transition State: LISTENING with voice-reactive amplitude on notch glow
+            voice_state_manager.set_state(VoiceState.LISTENING)
+            zoe_logger.log_action("VOICE_LISTENING_PHRASE")
 
-        if emergency_controller.is_stopped() or not self._running:
-            voice_state_manager.set_state(VoiceState.IDLE)
-            return
+            speech = self.recorder.record_until_silence(
+                silence_timeout=1.2,
+                max_duration=12.0,
+                energy_threshold=0.0015,
+                on_amplitude=lambda amp: self.anim_controller.set_audio_metrics(amp),
+                is_interrupted=lambda: emergency_controller.is_stopped() or not self._running,
+            )
 
-        # 3. Transition State: THINKING (Local STT)
-        voice_state_manager.set_state(VoiceState.THINKING)
-        transcription = self.stt.transcribe(speech, sample_rate=16000)
-        clean_text = transcription.strip()
+            if emergency_controller.is_stopped() or not self._running:
+                voice_state_manager.set_state(VoiceState.IDLE)
+                return
+
+            # 3. Transition State: THINKING (Local STT)
+            voice_state_manager.set_state(VoiceState.THINKING)
+            try:
+                transcription = self.stt.transcribe(speech, sample_rate=16000, vad_filter=True)
+            except TypeError:
+                transcription = self.stt.transcribe(speech, sample_rate=16000)
+            clean_text = transcription.strip()
 
         # Filter out accidental triggers / empty input
         if not clean_text or clean_text.lower() in ("zoe", "zoe.", "hey zoe"):
@@ -123,7 +139,10 @@ class VoicePipeline:
             emergency_controller.trigger_stop("Voice stop command")
             self.tts.stop()
             voice_state_manager.set_state(VoiceState.IDLE)
+            print("\n[Voice Stop Triggered]")
             return
+
+        print(f"\n[Voice Command: \"{clean_text}\"]")
 
         # 4. Transition State: ACTING (Run Agent / Tools / Vision)
         voice_state_manager.set_state(VoiceState.ACTING)
@@ -139,10 +158,11 @@ class VoicePipeline:
         if not response_text:
             response_text = "Task completed."
 
-        # 5. Transition State: SPEAKING (Local TTS)
+        # 5. Transition State: SPEAKING (Local TTS with voice-reactive notch)
         voice_state_manager.set_state(VoiceState.SPEAKING)
         zoe_logger.log_action("VOICE_SPEAKING_RESPONSE", text=response_text[:60])
 
+        print(f"Zoe: {response_text}\n")
         self.tts.speak(
             response_text,
             wait=True,
@@ -150,6 +170,7 @@ class VoicePipeline:
         )
 
         # 6. Return State: IDLE
+        self.anim_controller.set_audio_metrics(0.0)
         voice_state_manager.set_state(VoiceState.IDLE)
 
     def process_command(self, command: str, speak: bool = True) -> str:

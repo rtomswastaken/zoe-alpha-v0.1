@@ -13,7 +13,7 @@ class BaseSTT(ABC):
     """Abstract interface for local speech-to-text transcription."""
 
     @abstractmethod
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
+    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000, vad_filter: bool = False) -> str:
         """Transcribe in-memory audio array (float32) to text string."""
         pass
 
@@ -64,7 +64,7 @@ class FasterWhisperSTT(BaseSTT):
         except ImportError:
             return False
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
+    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000, vad_filter: bool = False) -> str:
         if len(audio) == 0:
             return ""
 
@@ -84,12 +84,17 @@ class FasterWhisperSTT(BaseSTT):
 
         start_t = time.time()
         # faster-whisper accepts 1D float32 numpy array directly in memory
+        transcribe_kwargs = {
+            "beam_size": 3,
+            "language": "en",
+            "vad_filter": vad_filter,
+        }
+        if vad_filter:
+            transcribe_kwargs["vad_parameters"] = dict(min_silence_duration_ms=400)
+
         segments, info = self._model.transcribe(
             audio,
-            beam_size=3,
-            language="en",
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=400),
+            **transcribe_kwargs,
         )
 
         texts = []

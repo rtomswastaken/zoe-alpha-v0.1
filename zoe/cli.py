@@ -134,56 +134,109 @@ def cmd_vision_test() -> int:
 
 
 def cmd_chat() -> int:
-    """Start Zoe natural language chat REPL with visible computer control."""
-    from zoe.agent.agent import ZoeAgent
-    agent = ZoeAgent()
+    """Start Zoe interactive voice and text assistant with animated MacBook Notch UI."""
+    import queue
+    import sys
+    import threading
+    from zoe.voice.pipeline import get_voice_pipeline
+    from zoe.voice.state import voice_state_manager, VoiceState
+    from AppKit import NSRunLoop, NSDate
+
+    pipeline = get_voice_pipeline()
 
     print_banner()
-    print("Zoe Natural-Language Computer Control REPL")
-    print("Inference: 100% Local (Ollama)")
-    print("Safety: Emergency stop active. Press ESC at any time to abort.\n")
+    print("  ZOE — Voice & Text Interactive Assistant (100% Local)")
+    print("=" * 60)
+    print("• Voice Wake Word:  Say 'Zoe' or a command (e.g. 'Zoe, open Safari')")
+    print("• Text Input:       Type your command below and press Enter")
+    print("• MacBook Notch UI: ACTIVE (Ambient reactive glow)")
+    print("• Emergency Stop:   Press 'ESC' at any time to abort")
+    print("• Commands:         'status', 'reset', 'exit'")
+    print("=" * 60 + "\n")
 
     emergency_controller.start_listener()
+    pipeline.start()
 
-    if not agent.is_ready():
-        print(f"[Warning] Local model '{agent.config.model.name}' is currently unavailable.")
-        print(f"Please check that Ollama is running at {agent.config.model.endpoint}.\n")
+    input_queue: queue.Queue[Optional[str]] = queue.Queue()
 
-    while True:
-        try:
-            user_input = input("Zoe> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting Zoe chat.")
-            break
+    def stdin_worker() -> None:
+        while True:
+            try:
+                line = sys.stdin.readline()
+                if not line:
+                    input_queue.put(None)
+                    break
+                input_queue.put(line.strip())
+            except Exception:
+                input_queue.put(None)
+                break
 
-        if not user_input:
-            continue
+    input_thread = threading.Thread(target=stdin_worker, daemon=True)
+    input_thread.start()
 
-        if user_input.lower() in ("exit", "quit", "q"):
-            print("Goodbye!")
-            break
-        elif user_input.lower() == "reset":
-            emergency_controller.reset()
-            print("[Info] Emergency stop reset. Control resumed.")
-            continue
-        elif user_input.lower() == "status":
-            cmd_model_status()
-            continue
+    sys.stdout.write("Zoe> ")
+    sys.stdout.flush()
 
-        print(f"\n[Zoe Thinking...]")
-        t0 = time.time()
-        state = agent.run_task(user_input)
-        elapsed = time.time() - t0
+    run_loop = NSRunLoop.currentRunLoop()
 
-        if state.recent_actions:
-            print(f"[Actions Executed ({len(state.recent_actions)}) in {elapsed:.2f}s]")
-            for act in state.recent_actions:
-                status_str = "✓" if act["result"].get("success") else "✗"
-                print(f"  {status_str} {act['action']}({act['arguments']})")
+    try:
+        while True:
+            # Pump Cocoa RunLoop for Notch UI animation (smooth 30+ FPS)
+            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
 
-        print(f"\nZoe: {state.final_response or 'Done.'}\n")
+            if emergency_controller.is_stopped():
+                print("\n[Emergency Stop] ESC pressed. Resetting Zoe to IDLE.")
+                pipeline.tts.stop()
+                voice_state_manager.set_state(VoiceState.IDLE)
+                emergency_controller.reset()
+                sys.stdout.write("Zoe> ")
+                sys.stdout.flush()
 
-    emergency_controller.stop_listener()
+            try:
+                user_input = input_queue.get_nowait()
+            except queue.Empty:
+                continue
+
+            if user_input is None:
+                # EOF reached
+                print("\nExiting Zoe chat.")
+                break
+
+            if not user_input:
+                sys.stdout.write("Zoe> ")
+                sys.stdout.flush()
+                continue
+
+            if user_input.lower() in ("exit", "quit", "q"):
+                print("Goodbye!")
+                break
+            elif user_input.lower() == "reset":
+                emergency_controller.reset()
+                print("[Info] Emergency stop reset. Control resumed.")
+                sys.stdout.write("Zoe> ")
+                sys.stdout.flush()
+                continue
+            elif user_input.lower() == "status":
+                cmd_model_status()
+                sys.stdout.write("Zoe> ")
+                sys.stdout.flush()
+                continue
+
+            # Process text command through pipeline (triggers THINKING -> ACTING -> SPEAKING on Notch UI)
+            print(f"\n[Executing: {user_input}]")
+            t0 = time.time()
+            response = pipeline.process_command(user_input, speak=True)
+            elapsed = time.time() - t0
+            print(f"Zoe: {response} ({elapsed:.1f}s)\n")
+            sys.stdout.write("Zoe> ")
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        print("\nStopping Zoe assistant...")
+    finally:
+        pipeline.stop()
+        emergency_controller.stop_listener()
+        print("Zoe assistant shut down safely.")
+
     return 0
 
 
@@ -631,8 +684,7 @@ def cmd_notch_test() -> int:
                     # Simulate speech amplitude wave
                     sim_amp = 0.3 + 0.5 * abs(math.sin(elapsed * 4.0))
                     set_ui_audio_level(sim_amp, pitch=260.0)
-                time.sleep(0.05)
-                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.01))
+                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
     finally:
         set_ui_state(VoiceState.IDLE)
         anim.stop()
@@ -719,8 +771,10 @@ def cmd_listen() -> int:
     pipeline.start()
 
     try:
+        from AppKit import NSRunLoop, NSDate
+        run_loop = NSRunLoop.currentRunLoop()
         while True:
-            time.sleep(0.5)
+            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
             if emergency_controller.is_stopped():
                 print("\n[Emergency Stop] Voice pipeline halted by ESC key.")
                 break

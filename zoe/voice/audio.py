@@ -173,12 +173,13 @@ class AudioRecorder:
         self,
         silence_timeout: float = 1.2,
         max_duration: float = 12.0,
-        energy_threshold: float = 0.02,
+        energy_threshold: float = 0.002,
+        on_amplitude: Optional[Callable[[float], None]] = None,
         is_interrupted: Optional[Callable[[], bool]] = None,
     ) -> np.ndarray:
         """
         Record speech until silence is detected or max_duration is reached.
-        Keeps entire recording in memory.
+        Streams live amplitude to on_amplitude callback for voice-reactive UI.
         """
         if not self._running:
             self.start()
@@ -196,7 +197,7 @@ class AudioRecorder:
             if now - start_time > max_duration:
                 break
 
-            time.sleep(0.04)
+            time.sleep(0.03)
             with self._lock:
                 if self._buffer:
                     latest = self._buffer[-1]
@@ -206,6 +207,14 @@ class AudioRecorder:
             if latest is not None:
                 recorded_chunks.append(latest)
                 chunk_energy = float(np.sqrt(np.mean(np.square(latest))))
+
+                # Update live amplitude for voice-reactive notch UI
+                if on_amplitude:
+                    try:
+                        on_amplitude(min(1.0, chunk_energy * 12.0))
+                    except Exception:
+                        pass
+
                 if chunk_energy > energy_threshold:
                     speech_started = True
                     last_speech_time = now

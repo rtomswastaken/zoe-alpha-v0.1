@@ -13,7 +13,13 @@ class BaseSTT(ABC):
     """Abstract interface for local speech-to-text transcription."""
 
     @abstractmethod
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000, vad_filter: bool = False) -> str:
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 16000,
+        vad_filter: bool = False,
+        partial: bool = False,
+    ) -> str:
         """Transcribe in-memory audio array (float32) to text string."""
         pass
 
@@ -64,7 +70,13 @@ class FasterWhisperSTT(BaseSTT):
         except ImportError:
             return False
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000, vad_filter: bool = False) -> str:
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 16000,
+        vad_filter: bool = False,
+        partial: bool = False,
+    ) -> str:
         if len(audio) == 0:
             return ""
 
@@ -90,7 +102,7 @@ class FasterWhisperSTT(BaseSTT):
             "vad_filter": vad_filter,
         }
         if vad_filter:
-            transcribe_kwargs["vad_parameters"] = dict(min_silence_duration_ms=400)
+            transcribe_kwargs["vad_parameters"] = dict(min_silence_duration_ms=300)
 
         segments, info = self._model.transcribe(
             audio,
@@ -103,7 +115,10 @@ class FasterWhisperSTT(BaseSTT):
 
         result = " ".join(texts).strip()
         elapsed = time.time() - start_t
-        zoe_logger.log_action("STT_TRANSCRIBED", text=result, duration=round(elapsed, 2))
+        action_name = "PARTIAL_TRANSCRIPT" if partial else "FINAL_TRANSCRIPT"
+        if result:
+            print(f"[{action_name} text=\"{result}\"]")
+        zoe_logger.log_action(action_name, text=result, duration=round(elapsed, 2))
         return result
 
 

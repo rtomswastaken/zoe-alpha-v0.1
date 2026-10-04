@@ -6,6 +6,7 @@ from zoe.voice.state import VoiceState, VoiceStateManager
 
 def test_voice_state_values():
     assert VoiceState.IDLE.value == "IDLE"
+    assert VoiceState.STARTUP.value == "STARTUP"
     assert VoiceState.LISTENING.value == "LISTENING"
     assert VoiceState.THINKING.value == "THINKING"
     assert VoiceState.ACTING.value == "ACTING"

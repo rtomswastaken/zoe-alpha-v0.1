@@ -27,6 +27,23 @@ from zoe.tools.vision import (
     FindOnScreenTool,
     InspectScreenTool,
 )
+from zoe.integrations.openclicky.tools import (
+    OpenClickyCaptionTool,
+    OpenClickyClearTool,
+    OpenClickyGuideTool,
+    OpenClickyHealthTool,
+    OpenClickyMultiPointTool,
+    OpenClickyPointTool,
+    OpenClickyScreenshotTool,
+    OpenClickySpeakTool,
+)
+from zoe.tools.visual import (
+    VisualCursorCaptionTool,
+    VisualCursorClearTool,
+    VisualCursorMarkerTool,
+    VisualCursorMoveTool,
+    VisualCursorTargetTool,
+)
 
 
 class ToolRegistry:
@@ -96,5 +113,24 @@ class ToolRegistry:
         self.register(FindOnScreenTool())
         self.register(InspectScreenTool())
 
+        # OpenClicky Visual Interaction & Cursor Overlay (Optional Subsystem)
+        self.register(OpenClickyHealthTool())
+        self.register(OpenClickyScreenshotTool())
+        self.register(OpenClickyPointTool())
+        self.register(OpenClickyMultiPointTool())
+        self.register(OpenClickyCaptionTool())
+        self.register(OpenClickySpeakTool())
+        self.register(OpenClickyClearTool())
+        self.register(OpenClickyGuideTool())
+
+        # Zoe Native Visual Cursor Subsystem (Pure Visual Overlay, Never Moves Real Mouse)
+        self.register(VisualCursorMoveTool())
+        self.register(VisualCursorTargetTool())
+        self.register(VisualCursorMarkerTool())
+        self.register(VisualCursorCaptionTool())
+        self.register(VisualCursorClearTool())
+
 
 tool_registry = ToolRegistry()
+
+

@@ -8,11 +8,14 @@ When asked to interact with a UI element (such as a button, search field, or vid
 1. Call find_on_screen(target=...) to locate it (this automatically checks Accessibility first and vision second).
 2. If found, call move_cursor(x, y) then click().
 3. Verify the result using inspect_screen() or take_screenshot() when appropriate.
+When asked to show, locate, or explain where a UI element is (e.g. 'show me where X is', 'where is Y'):
+1. Use openclicky_guide(target=...) or find_on_screen(target=...) followed by openclicky_point(x, y, caption=...). Do not move the real mouse pointer just to point.
 Never invent coordinates. If an element cannot be found with sufficient confidence, inform the user.
 Never claim an action succeeded unless the tool result or subsequent observation confirms it.
 If an action fails, analyze the result and attempt a safe alternative when appropriate.
 Never execute destructive operations without confirmation.
 Keep responses concise, natural, and direct.
+
 """
 
 def get_system_prompt(extra_instructions: str = "") -> str:

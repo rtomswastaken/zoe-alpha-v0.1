@@ -81,5 +81,14 @@ ui:
     enabled: true
     animation: true
     voice_reactive: true
-    show_on_idle: false
+    show_on_idle: true
     glow_spread: 24.0
+
+# OpenClicky Visual Interaction & Cursor Overlay Bridge (Optional Local Subsystem)
+openclicky:
+  enabled: true
+  host: "127.0.0.1"
+  port: 32123
+  timeout: 2.0
+  token: ""
+

@@ -651,13 +651,54 @@ def cmd_voice_status() -> int:
         return 1
 
 
-def cmd_notch_test() -> int:
+def cmd_notch_debug() -> int:
+    """Display obvious static MacBook Notch debug outline for physical visual verification."""
+    from AppKit import NSThread
+    from zoe.ui.notch import get_notch_overlay, pump_cocoa_events
+
+    overlay = get_notch_overlay()
+    target_screen = overlay.screen
+    s_frame = target_screen.frame()
+    w_frame = overlay.window.frame()
+
+    print("\n[Zoe MacBook Notch Diagnostic Mode]")
+    print(f"Notch display:  {target_screen.localizedName()}")
+    print(f"Screen frame:   origin=({s_frame.origin.x:.1f}, {s_frame.origin.y:.1f}), size=({s_frame.size.width:.1f}, {s_frame.size.height:.1f})")
+    print(f"Overlay frame:  origin=({w_frame.origin.x:.1f}, {w_frame.origin.y:.1f}), size=({w_frame.size.width:.1f}, {w_frame.size.height:.1f})")
+
+    # Display obvious static debug shape (bright cyan border + semi-transparent magenta)
+    overlay.update_visuals(state="DEBUG", alpha=1.0, pulse_phase=0.0)
+    overlay.window.orderFrontRegardless()
+
+    print(f"Window visible: {overlay.window.isVisible()}")
+    print(f"Window level:   {overlay.window.level()}")
+    print(f"Alpha:          {overlay.glow_view.alpha_level:.1f}")
+    print(f"Main thread:    {NSThread.isMainThread()}")
+    print("\nDisplaying high-contrast diagnostic outline around notch for 10 seconds...")
+    print("Press Ctrl+C to exit earlier.\n")
+
+    t_end = time.time() + 10.0
+    try:
+        while time.time() < t_end:
+            pump_cocoa_events(0.03)
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        print("\nExiting debug mode...")
+    finally:
+        overlay.hide()
+        pump_cocoa_events(0.02)
+
+    print("✓ Diagnostic overlay closed cleanly.\n")
+    return 0
+
+
+def cmd_notch_test(live: bool = False) -> int:
     """Visually test the MacBook Notch Glow UI across all lifecycle states."""
     import math
     from zoe.ui.animation import get_animation_controller
+    from zoe.ui.notch import pump_cocoa_events
     from zoe.ui.state import set_ui_state, set_ui_audio_level
     from zoe.voice.state import VoiceState
-    from AppKit import NSRunLoop, NSDate
 
     print("\n[Zoe MacBook Notch UI Test]")
     print("Anchoring non-activating click-through glow window to physical MacBook notch...")
@@ -665,12 +706,44 @@ def cmd_notch_test() -> int:
     anim = get_animation_controller()
     anim.start()
 
+    if live:
+        print("\n[Live Microphone Audio-Reactivity Mode]")
+        print("Speak into your microphone. Watch the notch glow react in real-time.")
+        print("Press Ctrl+C to finish.\n")
+        from zoe.voice.audio import AudioRecorder
+        recorder = AudioRecorder()
+        recorder.start_recording()
+        set_ui_state(VoiceState.LISTENING)
+        try:
+            while True:
+                recent = recorder.get_recent_audio(0.1)
+                if len(recent) > 0:
+                    data = recent.astype(float)
+                    if max(abs(data)) > 1.0:
+                        data = data / 32768.0
+                    rms = float(math.sqrt(sum(data ** 2) / len(data)))
+                    set_ui_audio_level(rms)
+                pump_cocoa_events(0.03)
+                time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("\nExiting live mode...")
+        finally:
+            recorder.stop_recording()
+            set_ui_state(VoiceState.IDLE)
+            anim.stop()
+        return 0
+
     states = [
-        (VoiceState.LISTENING, "1. LISTENING  (Gentle pulsing cyan/blue glow with audio amplitude)", 3.0),
-        (VoiceState.THINKING,  "2. THINKING   (Fluid revolving violet/indigo gradient)", 3.0),
-        (VoiceState.ACTING,    "3. ACTING     (Active wave ripple during computer control)", 3.0),
-        (VoiceState.SPEAKING,  "4. SPEAKING   (Voice-reactive magenta/purple/cyan expansion)", 3.0),
-        (VoiceState.IDLE,      "5. IDLE       (Fading out completely to 0% alpha)", 1.5),
+        (VoiceState.STARTUP,    "1. STARTUP    (Welcome bloom expanding cyan-to-violet flare)", 2.0),
+        (VoiceState.IDLE,       "2. IDLE       (Ambient subtle resting glow)", 1.2),
+        (VoiceState.LISTENING,  "3. LISTENING  (Gentle pulsing cyan/blue glow with audio amplitude)", 2.5),
+        (VoiceState.THINKING,   "4. THINKING   (Fluid revolving violet/indigo gradient wave)", 2.5),
+        (VoiceState.ACTING,     "5. ACTING     (Active directional turquoise/violet pulses)", 2.5),
+        (VoiceState.RESPONDING, "6. RESPONDING (TTS audio-reactive hot magenta/cyan wave)", 2.5),
+        (VoiceState.SUCCESS,    "7. SUCCESS    (Confirmation mint emerald pulse)", 1.8),
+        (VoiceState.ERROR,      "8. ERROR      (Warning coral red double pulse)", 1.8),
+        (VoiceState.STOPPING,   "9. STOPPING   (Immediate collapse on emergency stop)", 1.2),
+        (VoiceState.IDLE,       "10. IDLE      (Clean return to ambient idle)", 1.0),
     ]
 
     try:
@@ -680,11 +753,12 @@ def cmd_notch_test() -> int:
             start_t = time.time()
             while time.time() - start_t < duration:
                 elapsed = time.time() - start_t
-                if st in (VoiceState.LISTENING, VoiceState.SPEAKING):
-                    # Simulate speech amplitude wave
-                    sim_amp = 0.3 + 0.5 * abs(math.sin(elapsed * 4.0))
+                if st in (VoiceState.LISTENING, VoiceState.RESPONDING, VoiceState.SPEAKING):
+                    # Simulate human speech amplitude envelope
+                    sim_amp = 0.05 + 0.04 * abs(math.sin(elapsed * 4.5))
                     set_ui_audio_level(sim_amp, pitch=260.0)
-                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
+                pump_cocoa_events(0.03)
+                time.sleep(0.01)
     finally:
         set_ui_state(VoiceState.IDLE)
         anim.stop()
@@ -771,10 +845,9 @@ def cmd_listen() -> int:
     pipeline.start()
 
     try:
-        from AppKit import NSRunLoop, NSDate
-        run_loop = NSRunLoop.currentRunLoop()
+        from zoe.ui.notch import pump_cocoa_events
         while True:
-            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
+            pump_cocoa_events(0.03)
             if emergency_controller.is_stopped():
                 print("\n[Emergency Stop] Voice pipeline halted by ESC key.")
                 break
@@ -870,4 +943,145 @@ def cmd_memory_clear(force: bool = False) -> int:
     count = mgr.store.clear()
     print(f"Cleared {count} memory records.")
     return 0
+
+
+def cmd_openclicky_status() -> int:
+    """Check and display local OpenClicky bridge health and status."""
+    from zoe.integrations.openclicky.health import check_openclicky_health
+
+    status = check_openclicky_health()
+    print("\nZOE OPENCLICKY VISUAL SUBSYSTEM")
+    print("─" * 36)
+    print(status.format_diagnostic())
+    print("─" * 36)
+
+    if status.connected:
+        print("✓ OpenClicky visual control bridge is online.\n")
+        return 0
+    else:
+        print("ℹ OpenClicky bridge is currently not reachable.\n")
+        return 1
+
+
+def cmd_visual_cursor_test() -> int:
+    """Verify Zoe Visual Cursor moves independently without touching real macOS mouse pointer."""
+    import time
+    from zoe.macos.cursor import get_cursor_position
+    from zoe.visual.cursor import visual_cursor
+
+    print("\nZOE VISUAL CURSOR SAFETY & INDEPENDENCE TEST")
+    print("─" * 50)
+
+    # 1. Capture real mouse position
+    real_initial = get_cursor_position()
+    print(f"1. Real macOS cursor initial position: {real_initial}")
+
+    # 2. Move Zoe visual cursor across multiple coordinates
+    targets = [(300.0, 300.0), (700.0, 400.0), (500.0, 600.0)]
+    print("2. Moving Zoe visual cursor across screen...")
+    for tx, ty in targets:
+        visual_cursor.move_smoothly_to(tx, ty, duration=0.15, caption="Testing Visual Pointer", blocking=True)
+        time.sleep(0.05)
+        # Check that real mouse did not move
+        current_real = get_cursor_position()
+        if current_real != real_initial:
+            print(f"FAILED: Real cursor moved from {real_initial} to {current_real}!")
+            visual_cursor.clear()
+            return 1
+
+    # 3. Test target highlighting and click ripple
+    print("3. Testing target reticle and click ripple effects...")
+    visual_cursor.target(500.0, 600.0, caption="Vision Target")
+    visual_cursor.click_effect(500.0, 600.0)
+    time.sleep(0.1)
+
+    # 4. Verify overlay is click-through / mouse-transparent
+    win = visual_cursor.overlay.window
+    if win is not None:
+        ignores = win.ignoresMouseEvents()
+        print(f"4. Overlay ignoresMouseEvents: {ignores}")
+        if not ignores:
+            print("FAILED: Overlay window does not ignore mouse events!")
+            visual_cursor.clear()
+            return 1
+    else:
+        print("4. Overlay running in headless/mock mode.")
+
+    # 5. Final real cursor check
+    real_final = get_cursor_position()
+    print(f"5. Real macOS cursor final position:   {real_final}")
+
+    visual_cursor.clear()
+
+    if real_initial == real_final:
+        print("─" * 50)
+        print("✓ SUCCESS: Real cursor remained 100% stationary and untouched.")
+        print("✓ SUCCESS: Zoe visual cursor moved and animated independently.\n")
+        return 0
+    else:
+        print("─" * 50)
+        print(f"✗ FAILED: Real cursor position changed ({real_initial} != {real_final})!\n")
+        return 1
+
+
+def cmd_visual_cursor_demo() -> int:
+    """Run an interactive demonstration of Zoe's multiplayer-style visual cursor."""
+    import time
+    from zoe.macos.cursor import get_cursor_position
+    from zoe.visual.cursor import visual_cursor
+
+    print("\n" + "=" * 55)
+    print("ZOE INDEPENDENT VISUAL CURSOR DEMO")
+    print("=" * 55)
+
+    real_pos = get_cursor_position()
+    print(f"Real macOS mouse position: {real_pos} (will NOT be moved)")
+    print("Starting visual demonstration...\n")
+
+    # Step 1: Visual cursor appears
+    print("1. Visual cursor appears...")
+    visual_cursor.move_to(250.0, 250.0, caption="Zoe Online")
+    time.sleep(0.5)
+
+    # Step 2: Verify real cursor is stationary
+    pos2 = get_cursor_position()
+    assert pos2 == real_pos, "Real cursor moved!"
+    print("2. Real cursor confirmed stationary.")
+
+    # Step 3: Moves across several targets
+    print("3. Visual cursor smoothly glides across targets...")
+    path = [(400.0, 300.0), (650.0, 450.0), (850.0, 350.0)]
+    for pt in path:
+        visual_cursor.move_smoothly_to(pt[0], pt[1], duration=0.3, caption="Scanning...", blocking=True)
+        time.sleep(0.1)
+
+    # Step 4: Target highlight appears
+    print("4. Target highlight reticle appears...")
+    visual_cursor.target(850.0, 350.0, caption="Detected Element")
+    time.sleep(0.6)
+
+    # Step 5: Click ripple appears
+    print("5. Click ripple animation fires...")
+    visual_cursor.click_effect(850.0, 350.0)
+    time.sleep(0.5)
+
+    # Step 6: Caption appears
+    print("6. Caption label displays...")
+    visual_cursor.set_label("Action complete!")
+    time.sleep(0.6)
+
+    # Step 7: Visual cursor fades
+    print("7. Visual cursor fades away...")
+    visual_cursor.done_effect()
+    time.sleep(0.5)
+    visual_cursor.clear()
+
+    # Step 8: Real cursor remains untouched
+    final_pos = get_cursor_position()
+    print(f"8. Real cursor verified untouched: {final_pos} == {real_pos}")
+    print("=" * 55)
+    print("✓ Demonstration complete!\n")
+    return 0
+
+
 

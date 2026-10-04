@@ -27,11 +27,16 @@ def main() -> int:
     subparsers.add_parser("vision-test", help="Test local screen capture and visual UI inspection")
     subparsers.add_parser("voice-status", help="Check local voice subsystem status (Wake Word, STT, TTS, Mic, Notch)")
     subparsers.add_parser("voice-test", help="Run comprehensive local voice subsystem diagnostic")
-    subparsers.add_parser("notch-test", help="Visually test MacBook Notch glow animation states")
+    subparsers.add_parser("notch-debug", help="Display high-contrast MacBook Notch debug outline for physical visual QA")
+    notch_p = subparsers.add_parser("notch-test", help="Visually test MacBook Notch glow animation states")
+    notch_p.add_argument("--live", action="store_true", help="Run live microphone audio-reactive test")
     subparsers.add_parser("listen", help="Start continuous local voice assistant with ambient Notch UI")
     subparsers.add_parser("chat", help="Start Zoe AI voice/text interactive assistant chat")
     subparsers.add_parser("memory-status", help="Check local persistent memory status")
     subparsers.add_parser("memory-list", help="List all stored user and task memories")
+    subparsers.add_parser("openclicky-status", help="Check local OpenClicky visual overlay bridge connectivity and latency")
+    subparsers.add_parser("visual-cursor-test", help="Test Zoe visual cursor safety, independence, and mouse transparency")
+    subparsers.add_parser("visual-cursor-demo", help="Run interactive demonstration of Zoe independent visual cursor")
     mem_search_p = subparsers.add_parser("memory-search", help="Search stored memories by keyword")
     mem_search_p.add_argument("query", help="Keyword to search")
     mem_del_p = subparsers.add_parser("memory-delete", help="Delete a stored memory by key")
@@ -69,9 +74,12 @@ def main() -> int:
     elif args.command == "voice-test":
         from zoe.cli import cmd_voice_test
         return cmd_voice_test()
+    elif args.command == "notch-debug":
+        from zoe.cli import cmd_notch_debug
+        return cmd_notch_debug()
     elif args.command == "notch-test":
         from zoe.cli import cmd_notch_test
-        return cmd_notch_test()
+        return cmd_notch_test(live=getattr(args, "live", False))
     elif args.command == "listen":
         from zoe.cli import cmd_listen
         return cmd_listen()
@@ -93,7 +101,17 @@ def main() -> int:
     elif args.command == "memory-clear":
         from zoe.cli import cmd_memory_clear
         return cmd_memory_clear(force=args.force)
+    elif args.command == "openclicky-status":
+        from zoe.cli import cmd_openclicky_status
+        return cmd_openclicky_status()
+    elif args.command == "visual-cursor-test":
+        from zoe.cli import cmd_visual_cursor_test
+        return cmd_visual_cursor_test()
+    elif args.command == "visual-cursor-demo":
+        from zoe.cli import cmd_visual_cursor_demo
+        return cmd_visual_cursor_demo()
     else:
+
         print_banner()
         parser.print_help()
         return 0

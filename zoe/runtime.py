@@ -36,12 +36,17 @@ class ZoeRuntime:
         vision_model = get_vision_model()
         vision_ready = vision_model.is_available()
 
+        from zoe.integrations.openclicky.health import check_openclicky_health
+        oc_status = check_openclicky_health()
+
         diagnostics = {
             "accessibility": perms.get("accessibility_granted", False),
             "screen_recording": perms.get("screen_recording_granted", False),
             "microphone": perms.get("microphone_granted", False),
             "llm_ready": model_ready,
             "vision_ready": vision_ready,
+            "openclicky_ready": oc_status.connected,
+            "openclicky_status": oc_status,
             "all_systems_ready": bool(
                 perms.get("accessibility_granted")
                 and perms.get("screen_recording_granted")
@@ -67,6 +72,13 @@ class ZoeRuntime:
             print("   Please verify Ollama is running locally via `ollama serve`.")
         if not diag["vision_ready"]:
             print("ℹ️  Local vision model (minicpm-v) is offline. Visual fallback will be limited.")
+        if diag.get("openclicky_ready"):
+            oc = diag["openclicky_status"]
+            lat = f"{oc.latency_ms:.1f}ms" if oc.latency_ms is not None else "OK"
+            print(f"✓  OpenClicky visual bridge: CONNECTED ({lat}, {oc.tools_count} tools)")
+        else:
+            print("ℹ️  OpenClicky visual bridge: OFFLINE (Visual cursor layer disabled, continuing normally)")
+
 
     def start(self, interactive_cli: bool = False) -> None:
         """Launch the unified assistant runtime with ambient Notch UI and voice listening."""
@@ -101,11 +113,10 @@ class ZoeRuntime:
         zoe_logger.log_action("RUNTIME_STARTED")
 
         try:
-            from AppKit import NSRunLoop, NSDate
-            run_loop = NSRunLoop.currentRunLoop()
+            from zoe.ui.notch import pump_cocoa_events
             while self._running:
-                # Pump Cocoa RunLoop so AppKit flushes notch overlay drawing and animation
-                run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.03))
+                # Pump Cocoa event loop so AppKit flushes notch overlay drawing and animation to screen
+                pump_cocoa_events(0.03)
                 if emergency_controller.is_stopped():
                     print("\n[Emergency Stop] ESC pressed. Resetting Zoe to IDLE.")
                     self.voice_pipeline.tts.stop()

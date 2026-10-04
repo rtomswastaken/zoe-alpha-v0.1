@@ -243,3 +243,77 @@ def find_element_by_title(tree: Dict[str, Any], title: str) -> Optional[Dict[str
         return None
 
     return _traverse(tree)
+
+
+def ax_perform_action(element: Any, action_name: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Perform an action on an AXUIElement (e.g. 'AXPress', 'AXConfirm', 'AXRaise').
+    Does NOT move the physical mouse cursor.
+    """
+    try:
+        err_act, actions = ApplicationServices.AXUIElementCopyActionNames(element, None)
+        if err_act != 0 or not actions:
+            return (False, "CURSORLESS_ACTION_UNAVAILABLE: Element does not support accessibility actions")
+
+        target_action = action_name
+        if target_action is None:
+            for act in ("AXPress", "AXConfirm", "AXShowMenu", "AXPick", "AXRaise"):
+                if act in actions:
+                    target_action = act
+                    break
+
+        if not target_action or target_action not in actions:
+            return (False, f"CURSORLESS_ACTION_UNAVAILABLE: Supported actions {actions} do not include {target_action}")
+
+        res = ApplicationServices.AXUIElementPerformAction(element, target_action)
+        if res == 0:
+            zoe_logger.log_action("ACCESSIBILITY_PERFORM_ACTION", action=target_action)
+            return (True, f"Triggered {target_action} successfully")
+        return (False, f"AXUIElementPerformAction failed with error code {res}")
+    except Exception as e:
+        return (False, f"CURSORLESS_ACTION_UNAVAILABLE: {str(e)}")
+
+
+def ax_click_at(x: float, y: float) -> Tuple[bool, str]:
+    """
+    Perform a cursorless click on the UI element at screen coordinates (x, y)
+    via macOS Accessibility APIs. The physical mouse cursor remains completely stationary.
+    """
+    try:
+        sys_elem = ApplicationServices.AXUIElementCreateSystemWide()
+        err, elem = ApplicationServices.AXUIElementCopyElementAtPosition(sys_elem, float(x), float(y), None)
+        if err != 0 or not elem:
+            return (False, "CURSORLESS_ACTION_UNAVAILABLE: No accessibility element found at coordinates")
+
+        success, msg = ax_perform_action(elem)
+        if success:
+            return (True, msg)
+
+        # Try parent element if direct element is a label or icon
+        err_parent, parent = _get_ax_attribute(elem, ApplicationServices.kAXParentAttribute)
+        if err_parent == 0 and parent:
+            p_success, p_msg = ax_perform_action(parent)
+            if p_success:
+                return (True, f"Parent {p_msg}")
+
+        return (False, "CURSORLESS_ACTION_UNAVAILABLE: No actionable accessibility target at position")
+    except Exception as e:
+        return (False, f"CURSORLESS_ACTION_UNAVAILABLE: {str(e)}")
+
+
+def ax_click_element_by_title(title: str, app_name_or_pid: Optional[str | int] = None) -> Tuple[bool, str]:
+    """
+    Locate an element in the application by title and trigger its action cursorlessly.
+    """
+    tree_res = get_app_accessibility_tree(app_name_or_pid=app_name_or_pid, max_depth=4)
+    if not tree_res.get("success") or "tree" not in tree_res:
+        return (False, f"CURSORLESS_ACTION_UNAVAILABLE: Failed to get accessibility tree for {app_name_or_pid}")
+
+    found = find_element_by_title(tree_res["tree"], title)
+    if not found or not found.get("center"):
+        return (False, f"CURSORLESS_ACTION_UNAVAILABLE: Element '{title}' not found in accessibility hierarchy")
+
+    cx = found["center"]["x"]
+    cy = found["center"]["y"]
+    return ax_click_at(cx, cy)
+

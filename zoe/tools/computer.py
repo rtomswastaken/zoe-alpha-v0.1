@@ -1,7 +1,7 @@
 """Computer control tools: mouse, cursor, keyboard, screenshots."""
 
 from typing import Any, Dict, List, Optional
-from zoe.macos.cursor import move_cursor_smooth, get_cursor_position
+from zoe.macos.cursor import get_cursor_position
 from zoe.macos.mouse import (
     mouse_click,
     mouse_double_click,
@@ -9,6 +9,8 @@ from zoe.macos.mouse import (
     mouse_drag,
     mouse_scroll,
 )
+from zoe.macos.accessibility import ax_click_at
+from zoe.visual.cursor import visual_cursor
 from zoe.macos.keyboard import press_key, hotkey, type_text
 from zoe.macos.screenshots import capture_screen
 from zoe.macos.display import display_manager
@@ -18,7 +20,10 @@ from zoe.tools.base import BaseTool, ToolResult
 
 class MoveCursorTool(BaseTool):
     name = "move_cursor"
-    description = "Visibly and smoothly move the mouse cursor to target (x, y) coordinates."
+    description = (
+        "Smoothly move Zoe's visual cursor to target (x, y) coordinates. "
+        "Does NOT move the real macOS user cursor."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -31,12 +36,16 @@ class MoveCursorTool(BaseTool):
 
     def execute(self, x: float, y: float, duration: Optional[float] = None) -> Dict[str, Any]:
         try:
-            tx, ty = move_cursor_smooth(float(x), float(y), duration=duration)
+            emergency_controller.check_and_raise()
+            fx = float(x)
+            fy = float(y)
+            dur = float(duration) if duration is not None else 0.35
+            visual_cursor.move_smoothly_to(fx, fy, duration=dur, blocking=True)
             return ToolResult(
                 success=True,
                 action="move_cursor",
-                message=f"Cursor moved to ({tx:.1f}, {ty:.1f})",
-                data={"coordinates": [round(tx, 1), round(ty, 1)]},
+                message=f"Visual cursor moved to ({fx:.1f}, {fy:.1f}) [Physical cursor stationary]",
+                data={"visual_coordinates": [round(fx, 1), round(fy, 1)]},
             ).to_dict()
         except EmergencyStopTriggeredException as e:
             return ToolResult(success=False, action="move_cursor", error=str(e)).to_dict()
@@ -46,7 +55,10 @@ class MoveCursorTool(BaseTool):
 
 class ClickTool(BaseTool):
     name = "click"
-    description = "Click mouse at coordinates (x, y) or current location."
+    description = (
+        "Perform a cursorless click on an element at (x, y) via Accessibility, "
+        "or click in place if no coordinates are specified. The physical mouse pointer remains stationary."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -58,15 +70,40 @@ class ClickTool(BaseTool):
 
     def execute(self, x: Optional[float] = None, y: Optional[float] = None, button: str = "left") -> Dict[str, Any]:
         try:
-            fx = float(x) if x is not None else None
-            fy = float(y) if y is not None else None
-            cx, cy = mouse_click(x=fx, y=fy, button=button)
-            return ToolResult(
-                success=True,
-                action="click",
-                message=f"{button.capitalize()} click completed at ({cx:.1f}, {cy:.1f})",
-                data={"coordinates": [round(cx, 1), round(cy, 1)], "button": button},
-            ).to_dict()
+            emergency_controller.check_and_raise()
+            if x is not None and y is not None:
+                fx = float(x)
+                fy = float(y)
+                # Show visual feedback at target
+                visual_cursor.target(fx, fy, caption="Clicking")
+                visual_cursor.click_effect(fx, fy)
+
+                # Accessibility-first cursorless action
+                ax_success, ax_msg = ax_click_at(fx, fy)
+                if ax_success:
+                    return ToolResult(
+                        success=True,
+                        action="click",
+                        message=f"Activated element at ({fx:.1f}, {fy:.1f}) via Accessibility [Physical cursor stationary]",
+                        data={"coordinates": [round(fx, 1), round(fy, 1)], "method": "accessibility"},
+                    ).to_dict()
+                else:
+                    return ToolResult(
+                        success=False,
+                        action="click",
+                        error=f"CURSORLESS_ACTION_UNAVAILABLE: Cannot perform click at ({fx:.1f}, {fy:.1f}) without moving physical mouse.",
+                        data={"reason": ax_msg},
+                    ).to_dict()
+            else:
+                # Click in place without moving
+                cx, cy = mouse_click(button=button)
+                visual_cursor.click_effect(cx, cy)
+                return ToolResult(
+                    success=True,
+                    action="click",
+                    message=f"{button.capitalize()} click completed at ({cx:.1f}, {cy:.1f}) in place",
+                    data={"coordinates": [round(cx, 1), round(cy, 1)], "button": button},
+                ).to_dict()
         except EmergencyStopTriggeredException as e:
             return ToolResult(success=False, action="click", error=str(e)).to_dict()
         except Exception as e:
@@ -75,7 +112,7 @@ class ClickTool(BaseTool):
 
 class DoubleClickTool(BaseTool):
     name = "double_click"
-    description = "Double-click mouse at coordinates (x, y) or current location."
+    description = "Perform a cursorless double-click at (x, y) or in place."
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -86,15 +123,36 @@ class DoubleClickTool(BaseTool):
 
     def execute(self, x: Optional[float] = None, y: Optional[float] = None) -> Dict[str, Any]:
         try:
-            fx = float(x) if x is not None else None
-            fy = float(y) if y is not None else None
-            cx, cy = mouse_double_click(x=fx, y=fy)
-            return ToolResult(
-                success=True,
-                action="double_click",
-                message=f"Double click completed at ({cx:.1f}, {cy:.1f})",
-                data={"coordinates": [round(cx, 1), round(cy, 1)]},
-            ).to_dict()
+            emergency_controller.check_and_raise()
+            if x is not None and y is not None:
+                fx = float(x)
+                fy = float(y)
+                visual_cursor.target(fx, fy, caption="Double-clicking")
+                visual_cursor.click_effect(fx, fy)
+                ax_success, ax_msg = ax_click_at(fx, fy)
+                if ax_success:
+                    return ToolResult(
+                        success=True,
+                        action="double_click",
+                        message=f"Double-click activated at ({fx:.1f}, {fy:.1f}) via Accessibility",
+                        data={"coordinates": [round(fx, 1), round(fy, 1)]},
+                    ).to_dict()
+                else:
+                    return ToolResult(
+                        success=False,
+                        action="double_click",
+                        error=f"CURSORLESS_ACTION_UNAVAILABLE: Cannot perform double-click at ({fx:.1f}, {fy:.1f}) without moving physical mouse.",
+                        data={"reason": ax_msg},
+                    ).to_dict()
+            else:
+                cx, cy = mouse_double_click()
+                visual_cursor.click_effect(cx, cy)
+                return ToolResult(
+                    success=True,
+                    action="double_click",
+                    message=f"Double click completed at ({cx:.1f}, {cy:.1f}) in place",
+                    data={"coordinates": [round(cx, 1), round(cy, 1)]},
+                ).to_dict()
         except EmergencyStopTriggeredException as e:
             return ToolResult(success=False, action="double_click", error=str(e)).to_dict()
         except Exception as e:
@@ -103,7 +161,7 @@ class DoubleClickTool(BaseTool):
 
 class RightClickTool(BaseTool):
     name = "right_click"
-    description = "Right-click mouse at coordinates (x, y) or current location."
+    description = "Perform a right-click or contextual menu invocation cursorlessly."
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -114,15 +172,40 @@ class RightClickTool(BaseTool):
 
     def execute(self, x: Optional[float] = None, y: Optional[float] = None) -> Dict[str, Any]:
         try:
-            fx = float(x) if x is not None else None
-            fy = float(y) if y is not None else None
-            cx, cy = mouse_right_click(x=fx, y=fy)
-            return ToolResult(
-                success=True,
-                action="right_click",
-                message=f"Right click completed at ({cx:.1f}, {cy:.1f})",
-                data={"coordinates": [round(cx, 1), round(cy, 1)]},
-            ).to_dict()
+            emergency_controller.check_and_raise()
+            if x is not None and y is not None:
+                fx = float(x)
+                fy = float(y)
+                visual_cursor.target(fx, fy, caption="Right-clicking")
+                visual_cursor.click_effect(fx, fy)
+                # Check for AXShowMenu
+                from zoe.macos.accessibility import ax_perform_action
+                import ApplicationServices
+                sys_elem = ApplicationServices.AXUIElementCreateSystemWide()
+                err, elem = ApplicationServices.AXUIElementCopyElementAtPosition(sys_elem, fx, fy, None)
+                if err == 0 and elem:
+                    success, msg = ax_perform_action(elem, "AXShowMenu")
+                    if success:
+                        return ToolResult(
+                            success=True,
+                            action="right_click",
+                            message=f"Opened menu at ({fx:.1f}, {fy:.1f}) via Accessibility",
+                            data={"coordinates": [round(fx, 1), round(fy, 1)]},
+                        ).to_dict()
+                return ToolResult(
+                    success=False,
+                    action="right_click",
+                    error=f"CURSORLESS_ACTION_UNAVAILABLE: Cannot perform right-click at ({fx:.1f}, {fy:.1f}) without moving physical mouse.",
+                ).to_dict()
+            else:
+                cx, cy = mouse_right_click()
+                visual_cursor.click_effect(cx, cy)
+                return ToolResult(
+                    success=True,
+                    action="right_click",
+                    message=f"Right click completed at ({cx:.1f}, {cy:.1f}) in place",
+                    data={"coordinates": [round(cx, 1), round(cy, 1)]},
+                ).to_dict()
         except EmergencyStopTriggeredException as e:
             return ToolResult(success=False, action="right_click", error=str(e)).to_dict()
         except Exception as e:
@@ -153,12 +236,14 @@ class DragTool(BaseTool):
         duration: Optional[float] = None,
     ) -> Dict[str, Any]:
         try:
-            rx, ry = mouse_drag(float(start_x), float(start_y), float(end_x), float(end_y), duration=duration)
+            emergency_controller.check_and_raise()
+            visual_cursor.target(float(start_x), float(start_y), caption="Drag start")
+            visual_cursor.move_smoothly_to(float(end_x), float(end_y), caption="Drag target")
             return ToolResult(
-                success=True,
+                success=False,
                 action="drag",
-                message=f"Dragged from ({start_x}, {start_y}) to ({rx:.1f}, {ry:.1f})",
-                data={"start": [start_x, start_y], "end": [rx, ry]},
+                error="CURSORLESS_ACTION_UNAVAILABLE: Cannot perform physical drag without moving physical mouse.",
+                data={"start": [start_x, start_y], "end": [end_x, end_y]},
             ).to_dict()
         except EmergencyStopTriggeredException as e:
             return ToolResult(success=False, action="drag", error=str(e)).to_dict()

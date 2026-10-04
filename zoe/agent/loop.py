@@ -10,6 +10,7 @@ from zoe.models.base import LocalModel, ModelResponse, ToolCall
 from zoe.tools.registry import tool_registry
 from zoe.macos.emergency import emergency_controller
 from zoe.macos.logger import zoe_logger
+from zoe.state import zoe_state, ZoeState
 
 
 class AgentLoop:
@@ -96,6 +97,7 @@ class AgentLoop:
 
             state.iteration_count += 1
             zoe_logger.log_action("AGENT_THINK", iteration=state.iteration_count)
+            zoe_state.set_state(ZoeState.THINKING)
 
             # 4. Model inference
             try:
@@ -109,6 +111,7 @@ class AgentLoop:
                 err_msg = f"Local model error: {str(e)}"
                 state.mark_cancelled(err_msg)
                 zoe_logger.log_action("AGENT_MODEL_ERROR", error=str(e))
+                zoe_state.set_temporary_state(ZoeState.ERROR, duration=1.2)
                 break
 
             # 5. Handle model response
@@ -134,6 +137,7 @@ class AgentLoop:
                 for tc in model_resp.tool_calls:
                     if emergency_controller.is_stopped():
                         state.mark_cancelled("Emergency stop (ESC) triggered before tool execution")
+                        zoe_state.set_state(ZoeState.STOPPING)
                         break
 
                     # Validate tool execution safety
@@ -150,6 +154,7 @@ class AgentLoop:
                         continue
 
                     zoe_logger.log_action("AGENT_EXECUTE_TOOL", tool=tc.name, arguments=tc.arguments)
+                    zoe_state.set_state(ZoeState.ACTING)
 
                     # Execute strictly through ToolRegistry
                     tool_result = tool_registry.execute(tc.name, **tc.arguments)
@@ -181,12 +186,17 @@ class AgentLoop:
                     })
 
                 if state.cancelled:
+                    if emergency_controller.is_stopped():
+                        zoe_state.set_state(ZoeState.STOPPING)
+                    else:
+                        zoe_state.set_temporary_state(ZoeState.ERROR, duration=1.2)
                     break
 
             else:
                 final_text = model_resp.text or "Done."
                 state.mark_complete(final_text)
                 zoe_logger.log_action("AGENT_TASK_COMPLETE", response=final_text[:60])
+                zoe_state.set_temporary_state(ZoeState.SUCCESS, duration=1.2)
                 break
 
         return state

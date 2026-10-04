@@ -25,6 +25,7 @@ class VoicePipeline:
         wake_word: Optional[BaseWakeWord] = None,
     ) -> None:
         from zoe.ui.animation import get_animation_controller
+        from zoe.ui.terminal import get_terminal_indicator
 
         self.agent = agent or ZoeAgent()
         self.stt = stt or get_stt()
@@ -32,6 +33,7 @@ class VoicePipeline:
         self.wake_word = wake_word or get_wake_word_detector()
         self.recorder = AudioRecorder(sample_rate=16000)
         self.anim_controller = get_animation_controller()
+        self.terminal_indicator = get_terminal_indicator()
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -41,7 +43,7 @@ class VoicePipeline:
         self.recorder.add_callback(self._on_audio_chunk)
 
     def _on_audio_chunk(self, chunk, rms: float, pitch: float) -> None:
-        if voice_state_manager.current_state in (VoiceState.LISTENING, VoiceState.SPEAKING):
+        if voice_state_manager.current_state in (VoiceState.LISTENING, VoiceState.SPEAKING, VoiceState.RESPONDING):
             self.anim_controller.set_audio_metrics(rms, pitch)
 
     def start(self) -> None:
@@ -51,10 +53,17 @@ class VoicePipeline:
                 return
             self._running = True
 
-            # Start audio recorder and animation controller
+            # Start audio recorder, animation controller, and terminal indicator
             self.recorder.start()
             self.anim_controller.start()
-            voice_state_manager.set_state(VoiceState.IDLE)
+            self.terminal_indicator.start()
+
+            # Pre-warm STT model in background so first wake-word check is instant
+            if hasattr(self.stt, "_ensure_model"):
+                threading.Thread(target=self.stt._ensure_model, daemon=True).start()
+
+            # Trigger welcome bloom on program start, then settle into ambient IDLE
+            voice_state_manager.set_temporary_state(VoiceState.STARTUP, duration=1.4, return_state=VoiceState.IDLE)
 
             self._thread = threading.Thread(target=self._pipeline_loop, daemon=True)
             self._thread.start()
@@ -68,6 +77,7 @@ class VoicePipeline:
         self.tts.stop()
         self.recorder.stop()
         self.anim_controller.stop()
+        self.terminal_indicator.stop()
         voice_state_manager.set_state(VoiceState.IDLE)
 
         if self._thread and self._thread.is_alive():
@@ -82,9 +92,9 @@ class VoicePipeline:
                 time.sleep(0.1)
                 continue
 
-            time.sleep(0.08)
-            # Check recent 1.5s audio buffer for 'Zoe'
-            recent_audio = self.recorder.get_recent_audio(1.5)
+            time.sleep(0.1)
+            # Check recent 2.0s audio buffer for 'Zoe'
+            recent_audio = self.recorder.get_recent_audio(2.0)
             if len(recent_audio) == 0:
                 continue
 
@@ -92,42 +102,59 @@ class VoicePipeline:
                 self._handle_wake_cycle()
 
     def _handle_wake_cycle(self) -> None:
-        """Handle execution cycle triggered by wake word."""
+        """
+        Handle full voice cycle triggered by wake word:
+        IDLE -> WAKE_WORD_DETECTED -> LISTENING -> COMMAND_CAPTURE -> FINAL_TRANSCRIPT
+        -> THINKING -> ACTING -> RESPONDING -> SUCCESS -> IDLE.
+        """
         # 1. Check if user already spoke their command in the same breath (e.g. "Zoe open Safari")
         extracted = getattr(self.wake_word, "extracted_command", "").strip()
 
         if extracted and len(extracted.split()) >= 1 and extracted.lower() not in ("zoe", "hey"):
             clean_text = extracted
-            zoe_logger.log_action("VOICE_COMMAND_IMMEDIATE", command=clean_text)
-            # Brief visual pulse acknowledging wake word before acting
+            print(f"[COMMAND_CAPTURE_FINISHED command=\"{clean_text}\"]")
+            zoe_logger.log_action("COMMAND_CAPTURE_FINISHED", length=len(clean_text))
+            # Brief visual pulse in LISTENING acknowledging wake word before acting
             voice_state_manager.set_state(VoiceState.LISTENING)
-            time.sleep(0.3)
+            time.sleep(0.25)
             voice_state_manager.set_state(VoiceState.THINKING)
             time.sleep(0.15)
         else:
-            # 2. Transition State: LISTENING with voice-reactive amplitude on notch glow
+            # 2. User spoke only 'Zoe': enter LISTENING and capture the subsequent command
             voice_state_manager.set_state(VoiceState.LISTENING)
-            zoe_logger.log_action("VOICE_LISTENING_PHRASE")
+            print("[COMMAND_CAPTURE_STARTED mode=\"listening_for_utterance\"]")
+            zoe_logger.log_action("COMMAND_CAPTURE_STARTED")
 
             speech = self.recorder.record_until_silence(
-                silence_timeout=1.2,
+                silence_timeout=1.1,
+                initial_timeout=4.5,
                 max_duration=12.0,
-                energy_threshold=0.0015,
+                energy_threshold=0.070,
                 on_amplitude=lambda amp: self.anim_controller.set_audio_metrics(amp),
                 is_interrupted=lambda: emergency_controller.is_stopped() or not self._running,
             )
+
+            print("[COMMAND_CAPTURE_FINISHED]")
+            zoe_logger.log_action("COMMAND_CAPTURE_FINISHED")
 
             if emergency_controller.is_stopped() or not self._running:
                 voice_state_manager.set_state(VoiceState.IDLE)
                 return
 
-            # 3. Transition State: THINKING (Local STT)
+            if len(speech) == 0:
+                # User did not speak a command after saying 'Zoe'
+                voice_state_manager.set_state(VoiceState.IDLE)
+                return
+
+            # 3. Transition State: THINKING (Full utterance STT)
             voice_state_manager.set_state(VoiceState.THINKING)
             try:
-                transcription = self.stt.transcribe(speech, sample_rate=16000, vad_filter=True)
+                transcription = self.stt.transcribe(speech, sample_rate=16000, vad_filter=True, partial=False)
             except TypeError:
                 transcription = self.stt.transcribe(speech, sample_rate=16000)
+
             clean_text = transcription.strip()
+            print(f"[FINAL_TRANSCRIPT text=\"{clean_text}\"]")
 
         # Filter out accidental triggers / empty input
         if not clean_text or clean_text.lower() in ("zoe", "zoe.", "hey zoe"):
@@ -135,22 +162,28 @@ class VoicePipeline:
             return
 
         # Handle explicit voice interruption command
-        if clean_text.lower() in ("stop", "zoe stop", "stop.", "cancel"):
+        if clean_text.lower() in ("stop", "zoe stop", "stop.", "cancel", "abort", "halt"):
+            print("\n[Voice Stop Triggered]")
             emergency_controller.trigger_stop("Voice stop command")
             self.tts.stop()
+            voice_state_manager.set_state(VoiceState.STOPPING)
+            time.sleep(0.3)
             voice_state_manager.set_state(VoiceState.IDLE)
-            print("\n[Voice Stop Triggered]")
             return
 
         print(f"\n[Voice Command: \"{clean_text}\"]")
+        print(f"[COMMAND_DISPATCH_CALLED command=\"{clean_text}\"]")
 
         # 4. Transition State: ACTING (Run Agent / Tools / Vision)
         voice_state_manager.set_state(VoiceState.ACTING)
-        zoe_logger.log_action("VOICE_DISPATCH_AGENT", command=clean_text)
+        print(f"[AGENT_INVOCATION command=\"{clean_text}\"]")
+        zoe_logger.log_action("VOICE_DISPATCH_AGENT", length=len(clean_text))
 
         agent_state = self.agent.run_task(clean_text)
 
         if emergency_controller.is_stopped() or not self._running:
+            voice_state_manager.set_state(VoiceState.STOPPING)
+            time.sleep(0.15)
             voice_state_manager.set_state(VoiceState.IDLE)
             return
 
@@ -158,9 +191,10 @@ class VoicePipeline:
         if not response_text:
             response_text = "Task completed."
 
-        # 5. Transition State: SPEAKING (Local TTS with voice-reactive notch)
-        voice_state_manager.set_state(VoiceState.SPEAKING)
-        zoe_logger.log_action("VOICE_SPEAKING_RESPONSE", text=response_text[:60])
+        # 5. Transition State: RESPONDING (Local TTS with voice-reactive notch)
+        print(f"[TTS_INVOCATION text=\"{response_text}\"]")
+        voice_state_manager.set_state(VoiceState.RESPONDING)
+        zoe_logger.log_action("VOICE_SPEAKING_RESPONSE", length=len(response_text))
 
         print(f"Zoe: {response_text}\n")
         self.tts.speak(
@@ -169,7 +203,9 @@ class VoicePipeline:
             on_amplitude=lambda amp: self.anim_controller.set_audio_metrics(amp),
         )
 
-        # 6. Return State: IDLE
+        # 6. Brief confirmation pulse in SUCCESS, then return to IDLE
+        voice_state_manager.set_state(VoiceState.SUCCESS)
+        time.sleep(0.6)
         self.anim_controller.set_audio_metrics(0.0)
         voice_state_manager.set_state(VoiceState.IDLE)
 

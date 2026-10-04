@@ -1,5 +1,6 @@
 """Settings and configuration loader for Zoe."""
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
@@ -122,13 +123,22 @@ class NotchUIConfig:
     enabled: bool = True
     animation: bool = True
     voice_reactive: bool = True
-    show_on_idle: bool = False
+    show_on_idle: bool = True
     glow_spread: float = 24.0
 
 
 @dataclass
 class UIConfig:
     notch: NotchUIConfig = field(default_factory=NotchUIConfig)
+
+
+@dataclass
+class OpenClickyConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 32123
+    timeout: float = 2.0
+    token: str = ""
 
 
 @dataclass
@@ -145,6 +155,7 @@ class Config:
     screenshots: ScreenshotConfig = field(default_factory=ScreenshotConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    openclicky: OpenClickyConfig = field(default_factory=OpenClickyConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "Config":
@@ -181,6 +192,26 @@ class Config:
                 notch=NotchUIConfig(**notch_raw)
             )
 
+            openclicky_raw = data.get("openclicky", {})
+            # Environment variable overrides
+            oc_enabled = openclicky_raw.get("enabled", False)
+            if "ZOE_OPENCLICKY_ENABLED" in os.environ:
+                env_val = os.environ["ZOE_OPENCLICKY_ENABLED"].lower()
+                oc_enabled = env_val in ("1", "true", "yes", "on")
+
+            oc_host = os.environ.get("ZOE_OPENCLICKY_HOST", openclicky_raw.get("host", "127.0.0.1"))
+            oc_port = int(os.environ.get("ZOE_OPENCLICKY_PORT", openclicky_raw.get("port", 32123)))
+            oc_timeout = float(os.environ.get("ZOE_OPENCLICKY_TIMEOUT", openclicky_raw.get("timeout", 2.0)))
+            oc_token = os.environ.get("ZOE_OPENCLICKY_TOKEN", openclicky_raw.get("token", ""))
+
+            openclicky_cfg = OpenClickyConfig(
+                enabled=oc_enabled,
+                host=oc_host,
+                port=oc_port,
+                timeout=oc_timeout,
+                token=oc_token,
+            )
+
             return cls(
                 version=data.get("version", "1.0"),
                 model=ModelConfig(**data.get("model", {})),
@@ -194,6 +225,7 @@ class Config:
                 screenshots=ScreenshotConfig(**data.get("screenshots", {})),
                 voice=voice_cfg,
                 ui=ui_cfg,
+                openclicky=openclicky_cfg,
             )
         except Exception:
             return cls()

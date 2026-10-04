@@ -1,6 +1,7 @@
 """Local Text-to-Speech engine implementations (Native NSSpeechSynthesizer and extensible BaseTTS)."""
 
 from abc import ABC, abstractmethod
+import math
 import threading
 import time
 from typing import Callable, List, Optional
@@ -39,11 +40,15 @@ class BaseTTS(ABC):
 
 
 class _SpeechDelegate(NSObject):
-    """Cocoa delegate tracking speech completion."""
+    """Cocoa delegate tracking speech completion and live spoken word boundaries."""
 
     def speechSynthesizer_didFinishSpeaking_(self, synth, success):
         if hasattr(self, "_on_finish"):
             self._on_finish(bool(success))
+
+    def speechSynthesizer_willSpeakWord_ofString_(self, synth, word_range, text):
+        if hasattr(self, "_on_word"):
+            self._on_word(word_range, text)
 
 
 class NSSpeechTTS(BaseTTS):
@@ -64,8 +69,10 @@ class NSSpeechTTS(BaseTTS):
         self._lock = threading.Lock()
         self._is_speaking = False
         self._interrupted = False
+        self._last_word_time = 0.0
         self._delegate = _SpeechDelegate.alloc().init()
         self._delegate._on_finish = self._handle_finished
+        self._delegate._on_word = self._handle_word
         self._synth.setDelegate_(self._delegate)
 
         # Set voice
@@ -90,6 +97,9 @@ class NSSpeechTTS(BaseTTS):
     def _handle_finished(self, success: bool) -> None:
         with self._lock:
             self._is_speaking = False
+
+    def _handle_word(self, word_range, text) -> None:
+        self._last_word_time = time.time()
 
     def is_speaking(self) -> bool:
         with self._lock:
@@ -127,6 +137,7 @@ class NSSpeechTTS(BaseTTS):
         with self._lock:
             self._interrupted = False
             self._is_speaking = True
+            self._last_word_time = time.time()
             started = bool(self._synth.startSpeakingString_(clean_text))
 
         if not started:
@@ -137,20 +148,19 @@ class NSSpeechTTS(BaseTTS):
         if not wait:
             return True
 
-        # Polling loop during playback with simulated amplitude modulation for notch glow
-        start_time = time.time()
+        # Polling loop during playback with native speech cadence amplitude modulation
         while self.is_speaking():
             if self._interrupted:
                 return False
 
             if on_amplitude:
-                # Modulate amplitude with speech cadence envelope
-                elapsed = time.time() - start_time
-                sim_amp = 0.5 + 0.35 * (0.5 * (1.0 + (elapsed * 9.0) % 2.0 - 1.0))
-                on_amplitude(sim_amp)
+                # Word-cadence envelope: peaks when word is pronounced, decays naturally between words
+                dt = time.time() - self._last_word_time
+                word_amp = max(0.20, min(0.95, 0.95 * math.exp(-dt * 4.2)))
+                on_amplitude(word_amp)
 
             NSRunLoop.currentRunLoop().runUntilDate_(
-                NSDate.dateWithTimeIntervalSinceNow_(0.03)
+                NSDate.dateWithTimeIntervalSinceNow_(0.02)
             )
 
         if on_amplitude:

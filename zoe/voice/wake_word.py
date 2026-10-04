@@ -28,15 +28,16 @@ class BaseWakeWord(ABC):
 
 class VADKeywordWakeWord(BaseWakeWord):
     """
-    Local wake-word detector combining voice energy detection and fast keyword spotting.
-    Matches variations like 'Zoe', 'Hey Zoe', 'So Zoe'.
+    Local wake-word detector combining adaptive noise floor tracking,
+    fast neural VAD, and deterministic keyword spotting for 'Zoe'.
+    Matches variations: 'zoe', 'Zoe', 'ZOË', 'zoey', 'hey zoe'.
     """
 
     def __init__(
         self,
         phrase: str = "zoe",
         stt_engine: Optional[BaseSTT] = None,
-        energy_threshold: float = 0.0015,
+        energy_threshold: float = 0.045,
         cooldown_seconds: float = 1.0,
     ) -> None:
         self._phrase = phrase.lower().strip()
@@ -45,6 +46,8 @@ class VADKeywordWakeWord(BaseWakeWord):
         self.cooldown_seconds = cooldown_seconds
         self._last_trigger = 0.0
         self._extracted_command: str = ""
+        self._noise_floor: float = 0.04
+        self._vad_options = None
         self._lock = threading.Lock()
 
     @property
@@ -62,39 +65,76 @@ class VADKeywordWakeWord(BaseWakeWord):
             if now - self._last_trigger < self.cooldown_seconds:
                 return False
 
-        if len(audio) < int(sample_rate * 0.3):  # At least 300ms
+        if len(audio) < int(sample_rate * 0.4):  # At least 400ms
             return False
 
-        # 1. Energy check (don't run STT on complete background silence)
-        rms = float(np.sqrt(np.mean(np.square(audio))))
-        if rms < self.energy_threshold:
+        # 1. Adaptive energy check: do not invoke VAD or STT on room noise / silence
+        square_mean = np.mean(np.square(audio))
+        rms = float(np.sqrt(max(1e-9, square_mean)))
+
+        if rms < 0.12:
+            self._noise_floor = 0.95 * self._noise_floor + 0.05 * rms
+
+        cutoff = max(self.energy_threshold, self._noise_floor * 1.35)
+        if rms < cutoff:
             return False
 
-        # 2. Transcribe short slice with local STT without vad_filter dropping short words
-        transcription = self._stt.transcribe(audio, sample_rate=sample_rate, vad_filter=False).lower()
+        # 2. Fast Silero VAD check: verify vocal speech is present before running Whisper
+        try:
+            from faster_whisper.vad import get_speech_timestamps, VadOptions
+            if self._vad_options is None:
+                self._vad_options = VadOptions(
+                    threshold=0.45,
+                    min_speech_duration_ms=150,
+                    min_silence_duration_ms=250,
+                )
+            speech_stamps = get_speech_timestamps(audio, self._vad_options, sampling_rate=sample_rate)
+            if not speech_stamps:
+                return False
+        except Exception:
+            pass
+
+        # 3. Transcribe speech slice with local STT (marked as partial/diagnostic)
+        try:
+            transcription = self._stt.transcribe(
+                audio,
+                sample_rate=sample_rate,
+                vad_filter=True,
+                partial=True,
+            )
+        except TypeError:
+            transcription = self._stt.transcribe(audio, sample_rate=sample_rate)
+
         if not transcription or not transcription.strip():
             return False
 
-        # 3. Keyword matching: check target phrase and phonetic variations
-        clean = re.sub(r"[^\w\s]", " ", transcription).lower().strip()
+        raw_text = transcription.strip()
+
+        # 4. Deterministic keyword matching: normalize and match 'zoe', 'zoey', 'zoë'
+        clean = re.sub(r"[^\w\s]", " ", raw_text.lower()).strip()
         clean = clean.replace("ë", "e")
+        clean = " ".join(clean.split())
 
         wake_patterns = [
-            r"\b" + re.escape(self._phrase) + r"\b",
-            r"\b(zoey?|zoë|zoie|zowi|zowie|zoh|joey|chloe|dough|doe|tho)\b",
-            r"\bhey\s+(?:zoe|zoey|zoie)\b",
+            r"\b(?:hey\s+|hi\s+|ok\s+|okay\s+)?(zoe|zoey|zoie)\b",
         ]
+        if self._phrase and self._phrase not in ("zoe", "zoey", "zoie"):
+            wake_patterns.append(r"\b" + re.escape(self._phrase) + r"\b")
 
         for pat in wake_patterns:
             m = re.search(pat, clean)
             if m:
+                match_text = m.group(0)
                 # Extract subsequent command spoken in the same breath
                 trailing = clean[m.end():].strip()
                 trailing = re.sub(r"^(?:please|can you|could you|would you)\s+", "", trailing).strip()
                 with self._lock:
                     self._last_trigger = now
                     self._extracted_command = trailing
-                zoe_logger.log_action("WAKE_WORD_TRIGGERED", phrase=self._phrase, heard=transcription, command=trailing)
+
+                # Explicit diagnostic events (console + structured logger)
+                print(f"\n[WAKE_WORD_DETECTED text=\"{match_text}\"]")
+                zoe_logger.log_action("WAKE_WORD_DETECTED", phrase=match_text)
                 return True
 
         return False
